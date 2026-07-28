@@ -1,4 +1,6 @@
 import os
+import logging
+import requests
 from langchain_community.document_loaders import DirectoryLoader, TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -7,14 +9,40 @@ from langchain_core.language_models.llms import LLM
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
-from llama_cpp import Llama
+from llama_cpp import Llama, llama_supports_gpu_offload
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+# ── GPU Detection ──
+_gpu_available = False
+
+def detect_gpu():
+    global _gpu_available
+    if not llama_supports_gpu_offload():
+        log.info("GPU offload not available (llama-cpp-python compiled without CUDA)")
+        return
+    try:
+        import subprocess
+        result = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            _gpu_available = True
+            log.info(f"GPU detected: {result.stdout.strip().split(chr(10))[0]}")
+        else:
+            log.info("nvidia-smi failed — no NVIDIA GPU or driver issue")
+    except Exception as e:
+        log.info(f"GPU detection skipped: {e}")
+
+def get_gpu_layers() -> int:
+    return -1 if _gpu_available else 0
+
 
 # --- 1. Custom LangChain Wrappers for llama.cpp ---
 
 class LlamaCppEmbeddings(Embeddings):
     """Custom embedding wrapper using llama-cpp-python."""
     def __init__(self, model_path: str):
-        self.client = Llama(model_path=model_path, embedding=True, verbose=False)
+        self.client = Llama(model_path=model_path, embedding=True, verbose=False, n_gpu_layers=get_gpu_layers())
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         # llama-cpp accepts a list or single string depending on version, 
@@ -37,7 +65,8 @@ class LlamaCppLLM(LLM):
         self.client = Llama(
             model_path=self.model_path, 
             n_ctx=2048, 
-            verbose=False
+            verbose=False,
+            n_gpu_layers=get_gpu_layers()
         )
 
     def _call(self, prompt: str, stop: list[str] | None = None, **kwargs) -> str:
@@ -59,11 +88,51 @@ class LlamaCppLLM(LLM):
 DATA_PATH = "./data"
 PERSIST_DIRECTORY = "./chroma_db"
 
-EMBEDDING_MODEL_PATH = "./models/all-MiniLM-L6-v2-ggml-model-f16.gguf" 
+EMBEDDING_MODEL_PATH = "./models/all-MiniLM-L6-v2-ggml-model-f16.gguf"
+EMBEDDING_MODEL_INFO = {
+    "repo_id": "second-state/All-MiniLM-L6-v2-Embedding-GGUF",
+    "filename": "all-MiniLM-L6-v2-ggml-model-f16.gguf",
+}
 LLM_MODEL_PATH = "./models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 
+
+def ensure_embedding_model() -> bool:
+    if os.path.exists(EMBEDDING_MODEL_PATH):
+        return True
+    log.info("Embedding model not found, downloading...")
+    os.makedirs(os.path.dirname(EMBEDDING_MODEL_PATH), exist_ok=True)
+    url = f"https://huggingface.co/{EMBEDDING_MODEL_INFO['repo_id']}/resolve/main/{EMBEDDING_MODEL_INFO['filename']}"
+    tmp = EMBEDDING_MODEL_PATH + ".tmp"
+    try:
+        resp = requests.get(url, stream=True, timeout=30)
+        resp.raise_for_status()
+        total = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+        with open(tmp, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                if not chunk:
+                    continue
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    pct = int(downloaded / total * 100)
+                    log.info(f"Downloading embedding model... {pct}%")
+        os.replace(tmp, EMBEDDING_MODEL_PATH)
+        log.info(f"Embedding model downloaded ({downloaded} bytes)")
+        return True
+    except Exception as e:
+        log.error(f"Failed to download embedding model: {e}")
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return False
+
+
 def main():
+    detect_gpu()
     print("--- 1. Initializing llama.cpp Models ---")
+    if not ensure_embedding_model():
+        print("ERROR: Could not download embedding model. Exiting.")
+        return
     embeddings = LlamaCppEmbeddings(model_path=EMBEDDING_MODEL_PATH)
     llm = LlamaCppLLM(model_path=LLM_MODEL_PATH)
 
@@ -82,6 +151,9 @@ def main():
     docs = text_splitter.split_documents(raw_documents)
 
     print("--- 3. Creating Vector Store ---")
+    if not docs:
+        print("No documents found in data/. Place .txt or .pdf files and try again.")
+        return
     vector_store = Chroma.from_documents(
         documents=docs,
         embedding=embeddings,

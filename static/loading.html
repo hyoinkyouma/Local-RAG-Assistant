@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ <title>Local RAG Assistant</title>
+ <style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+   height: 100vh; display: flex; align-items: center; justify-content: center;
+   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+   background: #f9fafb; color: #1f2937;
+  }
+  .container { text-align: center; }
+  .spinner {
+   width: 40px; height: 40px; margin: 0 auto 20px;
+   border: 4px solid #e5e7eb; border-top-color: #2563eb;
+   border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 6px; }
+  p { font-size: 0.875rem; color: #6b7280; }
+  .bar { width: 240px; height: 4px; margin: 20px auto 0; background: #e5e7eb; border-radius: 2px; overflow: hidden; }
+  .bar-inner { height: 100%; width: 0%; background: #2563eb; border-radius: 2px; transition: width 0.5s; }
+  .error { color: #dc2626; font-size: 0.8rem; margin-top: 12px; }
+ </style>
+</head>
+<body>
+ <div class="container">
+  <div class="spinner"></div>
+  <h1>Loading Local RAG</h1>
+  <p id="status">Starting server...</p>
+  <div class="bar"><div class="bar-inner" id="bar"></div></div>
+  <div id="error" class="error"></div>
+ </div>
+ <script>
+  const statusEl = document.getElementById('status');
+  const barEl = document.getElementById('bar');
+  const errorEl = document.getElementById('error');
+  const healthUrl = 'http://127.0.0.1:8000/health';
+  const appUrl = 'http://127.0.0.1:8000/';
+  let attempts = 0;
+
+  async function poll() {
+   attempts++;
+   barEl.style.width = Math.min(attempts * 5, 90) + '%';
+   try {
+    const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
+    if (resp.ok) {
+     barEl.style.width = '100%';
+     statusEl.textContent = 'Ready!';
+     setTimeout(() => { window.location.href = appUrl; }, 400);
+     return;
+    }
+   } catch {}
+   if (attempts > 120) {
+    statusEl.textContent = 'Timed out';
+    errorEl.textContent = 'localhost:8000 is not responding. Check if the application is running.';
+    return;
+   }
+   const msgs = ['Starting server...', 'Loading models...', 'Indexing documents...', 'Almost ready...'];
+   statusEl.textContent = msgs[Math.min(attempts >> 3, msgs.length - 1)];
+   setTimeout(poll, 1000);
+  }
+  poll();
+ </script>
+</body>
+</html>

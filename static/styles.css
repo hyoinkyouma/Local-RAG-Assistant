@@ -38,7 +38,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .tab-btn:not(.active):hover { background: #f3f4f6; }
 
 /* ── Dark mode icons ── */
-#web-search-toggle.active { color: #2563eb; background-color: #eff6ff; }
+#web-search-toggle.active,
+#thinking-toggle.active { color: #2563eb; background-color: #eff6ff; }
 #sun-icon { display: none; }
 #moon-icon { display: block; }
 .dark #sun-icon { display: block; }
@@ -84,7 +85,36 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .dark .tab-btn.active { background: #4b5563; color: #60a5fa; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
 .dark .tab-btn:not(.active):hover { background: #374151; }
 .dark #dark-toggle:hover { background-color: #374151; color: #e5e7eb; }
-.dark #web-search-toggle { color: #6b7280; }
-.dark #web-search-toggle:hover { color: #60a5fa; background-color: #1e3a5f; }
-.dark #web-search-toggle.active { color: #60a5fa; }
+.dark #new-chat-btn:hover { background-color: #374151; color: #e5e7eb; }
+.dark #web-search-toggle,
+.dark #thinking-toggle { color: #6b7280; }
+.dark #web-search-toggle:hover,
+.dark #thinking-toggle:hover { color: #60a5fa; background-color: #1e3a5f; }
+.dark #web-search-toggle.active,
+.dark #thinking-toggle.active { color: #60a5fa; }
 .dark .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+.dark #chat-input { background-color: #374151; color: #e5e7eb; border-color: #4b5563; }
+.dark #gpu-status.text-green-600 { color: #6ee7b7; }
+
+/* ── Thinking details ── */
+.thinking-details { margin-bottom: 8px; font-size: 0.85em; }
+.thinking-details summary { cursor: pointer; color: #6b7280; font-weight: 500; padding: 4px 0; user-select: none; }
+.thinking-details summary:hover { color: #4b5563; }
+.thinking-text { color: #9ca3af; padding: 6px 8px; border-left: 2px solid #d1d5db; margin-top: 4px; }
+.thinking-text p { margin-bottom: 0.4em; }
+.dark .thinking-details summary { color: #9ca3af; }
+.dark .thinking-details summary:hover { color: #d1d5db; }
+.dark .thinking-text { color: #6b7280; border-left-color: #4b5563; }
+
+/* ── Copy button ── */
+.copy-btn {
+  position: absolute; top: 4px; right: 4px; display: none;
+  align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px;
+  color: #9ca3af; background: transparent; border: none; cursor: pointer;
+}
+.msg-assistant:hover .copy-btn { display: flex; }
+.copy-btn:hover { background: rgba(0,0,0,0.06); color: #4b5563; }
+.msg-content { position: relative; }
+.dark .copy-btn { color: #6b7280; }
+.dark .copy-btn:hover { background: rgba(255,255,255,0.08); color: #d1d5db; }

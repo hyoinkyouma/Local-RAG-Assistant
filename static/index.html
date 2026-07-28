@@ -4,7 +4,7 @@
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width, initial-scale=1.0">
  <title>Local RAG Assistant</title>
- <script src="https://cdn.tailwindcss.com"></script>
+ <script src="/static/tailwind.js"></script>
  <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body class="h-full bg-gray-50 flex flex-col">
@@ -14,11 +14,14 @@
  <h1 class="text-lg font-semibold text-gray-800">Local RAG Assistant</h1>
  </div>
  <div class="flex items-center gap-2">
- <button id="dark-toggle" class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100" title="Toggle dark mode">
- <svg id="sun-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
- <svg id="moon-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
- </button>
- <nav class="flex gap-1 bg-gray-100 rounded-lg p-1">
+  <button id="dark-toggle" class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100" title="Toggle dark mode">
+  <svg id="sun-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+  <svg id="moon-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
+  </button>
+  <button id="new-chat-btn" class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100" title="New chat" onclick="newChat()">
+  <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>
+  </button>
+  <nav class="flex gap-1 bg-gray-100 rounded-lg p-1">
  <button id="tab-chat-btn" class="tab-btn active px-4 py-1.5 text-sm font-medium rounded-md" data-tab="chat">Chat</button>
  <button id="tab-settings-btn" class="tab-btn px-4 py-1.5 text-sm font-medium rounded-md" data-tab="settings">Settings</button>
  </nav>
@@ -36,9 +39,12 @@
  <div class="flex-1 relative">
  <textarea id="chat-input" rows="2" placeholder="Ask a question about your documents..." class="w-full resize-none rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 placeholder-gray-400"></textarea>
  <div class="absolute bottom-2 right-2 flex items-center gap-1">
- <button id="web-search-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle web search">
- <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg>
- </button>
+  <button id="thinking-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle thinking mode">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+  </button>
+  <button id="web-search-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle web search">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg>
+  </button>
  <button id="send-btn" type="submit" class="bg-blue-600 text-white rounded-lg p-1.5 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4 20-7z"/></svg>
  </button>
@@ -56,7 +62,12 @@
  <h2 class="text-lg font-semibold text-gray-800 mb-4">Model Management</h2>
  <p class="text-sm text-gray-500 mb-4">Select which chat model to use. Models are downloaded from Hugging Face and stored locally.</p>
 
- <div id="model-list" class="space-y-3"></div>
+  <div id="model-list" class="space-y-3"></div>
+
+  <div class="mt-4 flex items-center gap-2 text-xs text-gray-500">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9z"/></svg>
+  <span>GPU Acceleration: <span id="gpu-status">Detecting...</span></span>
+  </div>
 
  <div id="dl-progress-area" class="hidden mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
  <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">

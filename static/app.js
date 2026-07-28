@@ -4,6 +4,8 @@ let isSending = false;
 let polling = false;
 let dlPolling = false;
 let webSearchEnabled = false;
+let thinkingEnabled = false;
+let chatHistory = [];
 
 // ===== DOM REFS =====
 const $ = (s) => document.querySelector(s);
@@ -27,11 +29,13 @@ const progressBar = $('#progress-bar');
 const progressMsg = $('#progress-message');
 const progressPct = $('#progress-percent');
 const webSearchToggle = $('#web-search-toggle');
+const thinkingToggle = $('#thinking-toggle');
 const modelList = $('#model-list');
 const dlProgressArea = $('#dl-progress-area');
 const dlProgressBar = $('#dl-progress-bar');
 const dlProgressMsg = $('#dl-progress-message');
 const dlProgressPct = $('#dl-progress-pct');
+const gpuStatus = $('#gpu-status');
 
 // ===== TAB SWITCHING =====
 tabBtns.forEach(btn => {
@@ -135,6 +139,12 @@ function startDlPolling() {
   }, 1000);
 }
 
+function newChat() {
+  messagesEl.innerHTML = '';
+  chatHistory = [];
+  addMessage('assistant', 'Hello! I can answer questions about your documents. Upload files in Settings to expand my knowledge. If no model is loaded, go to Settings to download and activate one.');
+}
+
 async function selectModel(key) {
   try {
     const resp = await fetch(`/v1/models/select/${key}`, { method: 'POST' });
@@ -142,7 +152,7 @@ async function selectModel(key) {
     if (data.status === 'ok') {
       refreshModelList();
       checkHealth();
-      addMessage('assistant', 'Switched to model. You can now ask questions.');
+      newChat();
     }
   } catch (e) {
     alert('Failed to select model: ' + e.message);
@@ -163,6 +173,13 @@ async function checkHealth() {
       chatInput.disabled = true;
       sendBtn.disabled = true;
     }
+    if (data.gpu_available) {
+      gpuStatus.textContent = 'Enabled \u2014 ' + (data.gpu_name || 'NVIDIA GPU');
+      gpuStatus.className = 'text-green-600';
+    } else {
+      gpuStatus.textContent = 'Not available (CPU only)';
+      gpuStatus.className = 'text-gray-400';
+    }
   } catch (e) {
     console.error('Health check failed:', e);
   }
@@ -173,6 +190,13 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+function stripThinking(text) {
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  text = text.replace(/^[\s\S]*?<\/think>/i, '');
+  text = text.replace(/<\/?\s*think\s*\/?>/gi, '');
+  return text.trim();
 }
 
 function renderMarkdown(text) {
@@ -190,12 +214,63 @@ function renderMarkdown(text) {
 }
 
 // ===== CHAT =====
+function splitThinking(text) {
+  const cleaned = stripThinking(text);
+  const thinkMatch = cleaned.match(/^(Thinking\s*Process|Thought|Reasoning|Analysis)\s*:?\s*\n/i);
+  if (!thinkMatch) return [null, cleaned];
+
+  const lines = cleaned.split('\n');
+  let splitIdx = lines.length;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (/^(?:\d+\.\s|Final\s*:?\s|Check\s|Let's\s|Wait,\s|Actually,\s|Refining|Draft\s)/i.test(trimmed) && trimmed.length < 120) {
+      splitIdx = i;
+      break;
+    }
+  }
+  const thinkText = lines.slice(0, splitIdx).join('\n').trim();
+  const respText = lines.slice(splitIdx).join('\n').trim();
+  return [thinkText || null, respText || cleaned];
+}
+
+function renderThinkingCollapsed(text) {
+  const [thinkText, respText] = splitThinking(text);
+  if (thinkText && respText !== thinkText) {
+    return `<details class="thinking-details"><summary>Thinking Process</summary><div class="thinking-text">${renderMarkdown(thinkText)}</div></details>${renderMarkdown(respText)}`;
+  }
+  return renderMarkdown(respText);
+}
+
+function renderContent(text) {
+  if (thinkingEnabled) return renderThinkingCollapsed(text);
+  const [, respText] = splitThinking(text);
+  return renderMarkdown(respText);
+}
+
 function addMessage(role, content, citations) {
   const div = document.createElement('div');
   div.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
   const inner = document.createElement('div');
   inner.className = `max-w-[80%] md:max-w-[70%] px-4 py-2.5 msg-content ${role === 'user' ? 'msg-user' : 'msg-assistant'}`;
-  inner.innerHTML = renderMarkdown(content);
+  inner.innerHTML = renderContent(content);
+
+  if (role === 'assistant') {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copy-btn';
+    copyBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`;
+    copyBtn.title = 'Copy';
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(content);
+      copyBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>`;
+      copyBtn.title = 'Copied';
+      setTimeout(() => {
+        copyBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`;
+        copyBtn.title = 'Copy';
+      }, 2000);
+    });
+    inner.appendChild(copyBtn);
+  }
+
   div.appendChild(inner);
 
   if (role === 'assistant' && citations && citations.length > 0) {
@@ -236,6 +311,11 @@ function removeTypingIndicator() {
   if (el) el.remove();
 }
 
+thinkingToggle.addEventListener('click', () => {
+  thinkingEnabled = !thinkingEnabled;
+  thinkingToggle.classList.toggle('active', thinkingEnabled);
+});
+
 webSearchToggle.addEventListener('click', () => {
   webSearchEnabled = !webSearchEnabled;
   webSearchToggle.classList.toggle('active', webSearchEnabled);
@@ -259,9 +339,11 @@ chatForm.addEventListener('submit', async (e) => {
   try {
     const body = {
       model: 'default',
-      messages: [{ role: 'user', content: text }],
-      temperature: 0.1,
-      max_tokens: 512,
+      messages: [...chatHistory, { role: 'user', content: text }],
+      temperature: 0.7,
+      max_tokens: 8192,
+      stream: true,
+      enable_thinking: thinkingEnabled,
     };
     if (webSearchEnabled) body.web_search = true;
     const resp = await fetch('/v1/chat/completions', {
@@ -273,10 +355,109 @@ chatForm.addEventListener('submit', async (e) => {
       const errData = await resp.json();
       throw new Error(errData.detail || resp.statusText);
     }
-    const data = await resp.json();
+
+    // Create the assistant message div early for progressive fill
     removeTypingIndicator();
-    const answer = data.choices?.[0]?.message?.content || '(empty response)';
-    addMessage('assistant', answer, data.citations);
+    const assistantDiv = document.createElement('div');
+    assistantDiv.className = 'flex justify-start';
+    const assistantInner = document.createElement('div');
+    assistantInner.className = 'max-w-[80%] md:max-w-[70%] px-4 py-2.5 msg-content msg-assistant';
+    assistantInner.id = 'streaming-msg';
+    assistantDiv.appendChild(assistantInner);
+    messagesEl.appendChild(assistantDiv);
+
+    // Build content progressively
+    let rawContent = '';
+    let citationsData = null;
+    let buffer = '';
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '[DONE]') continue;
+
+        try {
+          const evt = JSON.parse(payload);
+
+          if (evt.type === 'citations') {
+            citationsData = evt.citations;
+            continue;
+          }
+          if (evt.type === 'usage') continue;
+
+          const choice = evt.choices?.[0];
+          if (!choice) continue;
+
+          const delta = choice.delta || {};
+          if (delta.content) {
+            rawContent += delta.content;
+            const rendered = renderContent(rawContent);
+            assistantInner.innerHTML = rendered;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        } catch {}
+      }
+    }
+
+    // Final render with citations
+    const finalHtml = renderContent(rawContent);
+    assistantInner.innerHTML = finalHtml;
+    assistantInner.id = '';
+
+    // Add copy button
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copy-btn';
+    copyBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`;
+    copyBtn.title = 'Copy';
+    copyBtn.addEventListener('click', () => {
+      const copyContent = thinkingEnabled ? rawContent : stripThinking(rawContent);
+      navigator.clipboard.writeText(copyContent);
+      copyBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>`;
+      copyBtn.title = 'Copied';
+      setTimeout(() => {
+        copyBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>`;
+        copyBtn.title = 'Copy';
+      }, 2000);
+    });
+    assistantInner.appendChild(copyBtn);
+
+    // Citations after the message
+    if (citationsData && citationsData.length > 0) {
+      const citeWrapper = document.createElement('div');
+      citeWrapper.className = 'ml-2 mt-1 space-y-1';
+      citationsData.forEach((c) => {
+        const cite = document.createElement('div');
+        cite.className = 'text-xs';
+        const toggle = document.createElement('button');
+        toggle.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
+        toggle.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2-10H7a2 2 0 00-2 2v14l4-2 4 2 4-2 4 2V6a2 2 0 00-2-2z"/></svg> ${c.source}${c.page != null ? ' (p.' + c.page + ')' : ''}`;
+        const body = document.createElement('div');
+        body.className = 'citation-body pl-4 text-gray-500';
+        body.textContent = c.content;
+        toggle.addEventListener('click', () => body.classList.toggle('open'));
+        cite.appendChild(toggle);
+        cite.appendChild(body);
+        citeWrapper.appendChild(cite);
+      });
+      assistantDiv.appendChild(citeWrapper);
+    }
+
+    // Save to history
+    chatHistory.push({ role: 'user', content: text });
+    chatHistory.push({ role: 'assistant', content: thinkingEnabled ? rawContent : stripThinking(rawContent) });
+
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   } catch (err) {
     removeTypingIndicator();
     addMessage('assistant', 'Error: ' + err.message);

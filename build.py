@@ -13,6 +13,11 @@ import shutil
 import subprocess
 
 
+LLAMA_CPP_WHEEL = (
+    "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.34-cu125/"
+    "llama_cpp_python-0.3.34-py3-none-win_amd64.whl"
+)
+
 def main():
     # Paths
     root = os.path.abspath(os.path.dirname(__file__))
@@ -26,6 +31,14 @@ def main():
         print(f"ERROR: Embedding model not found at {embedding_src}")
         print("Place the GGUF embedding model in models/ before building.")
         sys.exit(1)
+
+    # Install CUDA-enabled llama-cpp-python wheel from GitHub
+    print("Installing CUDA-enabled llama-cpp-python...")
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install",
+        "--force-reinstall", "--no-cache-dir",
+        LLAMA_CPP_WHEEL
+    ])
 
     # Clean previous builds
     for d in [dist_dir, build_dir]:

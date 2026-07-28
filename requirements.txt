@@ -62,6 +62,8 @@ langgraph-checkpoint==4.1.1
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
 langsmith==0.10.9
+# For CUDA support (also works on CPU), replace with:
+#   pip install https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.34-cu125/llama_cpp_python-0.3.34-py3-none-win_amd64.whl
 llama_cpp_python==0.3.34
 lxml==6.1.1
 markdown-it-py==4.2.0
