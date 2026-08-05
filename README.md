@@ -26,11 +26,12 @@ Place GGUF model files in the `models/` directory:
 
 | File | Purpose |
 |------|---------|
-| `all-MiniLM-L6-v2-ggml-model-f16.gguf` | Embedding model (384‑dim, **bundled** in PyInstaller build) |
+| `granite-embedding-english-r2.Q8_0.gguf` | Embedding model (768-dim, IBM Granite / ModernBERT, auto-downloaded if missing) |
+| `granite-4.1-3b-UD-Q4_K_XL.gguf` | IBM Granite 4.1 3B Instruct (downloadable from Settings) |
 | `qwen2.5-1.5b-instruct-q4_k_m.gguf` | LLM for answer generation (downloadable from Settings) |
 | `llama-3.2-1b-instruct-q4_k_m.gguf` | Alternative LLM (downloadable from Settings) |
 
-LLMs can also be downloaded at runtime through the Settings panel — uses `requests` streaming from Hugging Face (not `huggingface_hub`). The embedding model is bundled with the PyInstaller build and present in the repo.
+LLMs can also be downloaded at runtime through the Settings panel — uses `requests` streaming from Hugging Face (not `huggingface_hub`). The embedding model auto-downloads on startup if missing (or is bundled with the PyInstaller build).
 
 ## Usage
 

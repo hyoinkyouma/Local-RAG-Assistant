@@ -31,15 +31,26 @@ DATA_PATH = os.path.join(DATA_ROOT, "data")
 UPLOAD_PATH = os.path.join(DATA_ROOT, "uploads")
 MODELS_DIR = os.path.join(DATA_ROOT, "models")
 PERSIST_DIRECTORY = os.path.join(DATA_ROOT, "chroma_db")
-EMBEDDING_MODEL_PATH = os.path.join(RES_DIR, "models", "all-MiniLM-L6-v2-ggml-model-f16.gguf")
+EMBEDDING_MODEL_FILENAME = "granite-embedding-english-r2.Q8_0.gguf"
+EMBEDDING_MODEL_PATH = os.path.join(RES_DIR, "models", EMBEDDING_MODEL_FILENAME)
 EMBEDDING_MODEL_INFO = {
-    "repo_id": "second-state/All-MiniLM-L6-v2-Embedding-GGUF",
-    "filename": "all-MiniLM-L6-v2-ggml-model-f16.gguf",
+    "repo_id": "mradermacher/granite-embedding-english-r2-GGUF",
+    "filename": "granite-embedding-english-r2.Q8_0.gguf",
 }
 LLM_MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 CURRENT_MODEL_FILE = os.path.join(MODELS_DIR, "current_model.txt")
 
 AVAILABLE_MODELS = {
+    "granite-4.1-3b-instruct": {
+        "id": "granite-4.1-3b-instruct",
+        "name": "Granite 4.1 3B Instruct",
+        "repo_id": "unsloth/granite-4.1-3b-GGUF",
+        "filename": "granite-4.1-3b-UD-Q4_K_XL.gguf",
+        "size_human": "~2.1 GB",
+        "param_size_b": 5.0,
+        "allow_search": True,
+        "description": "IBM Granite 4.1 3B - strong tool calling & RAG, Apache-2.0"
+    },
     "qwen2.5-1.5b-instruct": {
         "id": "qwen2.5-1.5b-instruct",
         "name": "Qwen 2.5 1.5B Instruct",
@@ -47,6 +58,7 @@ AVAILABLE_MODELS = {
         "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
         "size_human": "~1.1 GB",
         "param_size_b": 1.5,
+        "allow_search": False,
         "description": "Good balance of speed and quality for CPU inference"
     },
     "phi-3-mini-4k-instruct": {
@@ -56,6 +68,7 @@ AVAILABLE_MODELS = {
         "filename": "Phi-3-mini-4k-instruct-q4.gguf",
         "size_human": "~2.2 GB",
         "param_size_b": 3.8,
+        "allow_search": True,
         "description": "Microsoft's efficient 3.8B model"
     },
     "llama-3.2-1b-instruct": {
@@ -65,6 +78,7 @@ AVAILABLE_MODELS = {
         "filename": "llama-3.2-1b-instruct-q4_k_m.gguf",
         "size_human": "~0.8 GB",
         "param_size_b": 1.0,
+        "allow_search": False,
         "description": "Fast and lightweight for basic Q&A"
     },
     "llama-3.2-3b-instruct": {
@@ -74,6 +88,7 @@ AVAILABLE_MODELS = {
         "filename": "llama-3.2-3b-instruct-q4_k_m.gguf",
         "size_human": "~2.0 GB",
         "param_size_b": 3.0,
+        "allow_search": False,
         "description": "Higher quality responses, slightly slower"
     },
     "qwen3.5-9b-instruct": {
@@ -82,6 +97,7 @@ AVAILABLE_MODELS = {
         "repo_id": "bartowski/Qwen_Qwen3.5-9B-GGUF",
         "filename": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
         "size_human": "~6.2 GB",
+        "allow_search": True,
         "param_size_b": 9.0,
         "description": "WARNING: Experimental, may have performance issues on machines with less than 16GB of System Memory. Qwen 3.5 hybrid architecture, excellent quality for 16GB systems"
     }
@@ -179,11 +195,9 @@ def _parse_qwen_tool_call(xml_text: str) -> dict | None:
 
 
 def supports_function_calling() -> bool:
-    size = get_current_model_param_size()
-    if size is None:
-        return False
-    return size >= FC_THRESHOLD_B
-
+    if CURRENT_MODEL and CURRENT_MODEL in AVAILABLE_MODELS:
+        return AVAILABLE_MODELS[CURRENT_MODEL].get("allow_search", False)
+    return False
 
 class LlamaCppEmbeddings(Embeddings):
     def __init__(self, model_path: str):
@@ -223,7 +237,6 @@ def load_current_model_setting():
 def save_current_model_setting(key: str):
     with open(CURRENT_MODEL_FILE, "w") as f:
         f.write(key)
-
 
 def get_current_model_param_size() -> float | None:
     if CURRENT_MODEL and CURRENT_MODEL in AVAILABLE_MODELS:
@@ -277,8 +290,35 @@ def ensure_embedding_model() -> bool:
     return False
 
 
+def ensure_embedding_index_matches():
+    """Wipe the persisted Chroma index if it was built with a different embedding model."""
+    marker_path = os.path.join(PERSIST_DIRECTORY, "embedding_model.txt")
+    if os.path.exists(PERSIST_DIRECTORY):
+        expected = EMBEDDING_MODEL_FILENAME
+        actual = None
+        if os.path.exists(marker_path):
+            with open(marker_path) as f:
+                actual = f.read().strip()
+        if actual != expected:
+            log.info(f"Embedding model changed ({actual or 'unknown'} -> {expected}); rebuilding index")
+            for entry in os.listdir(PERSIST_DIRECTORY):
+                entry_path = os.path.join(PERSIST_DIRECTORY, entry)
+                if os.path.isdir(entry_path):
+                    shutil.rmtree(entry_path)
+                else:
+                    os.remove(entry_path)
+
+
+def mark_embedding_index_matches():
+    os.makedirs(PERSIST_DIRECTORY, exist_ok=True)
+    with open(os.path.join(PERSIST_DIRECTORY, "embedding_model.txt"), "w") as f:
+        f.write(EMBEDDING_MODEL_FILENAME)
+
+
 def build_resources():
     global llm_instance, retriever, embeddings_instance
+
+    ensure_embedding_index_matches()
 
     if not ensure_embedding_model():
         log.error("Embedding model unavailable. RAG features disabled.")
@@ -324,11 +364,13 @@ def build_resources():
         retriever = vector_store.as_retriever(search_kwargs={"k": 2})
     else:
         log.info("No documents found — vector store will be created on first ingestion")
+    mark_embedding_index_matches()
 
 
 def run_ingestion(file_paths: list[str]):
     global ingestion_progress, retriever, embeddings_instance
 
+    ensure_embedding_index_matches()
     embeddings = embeddings_instance or LlamaCppEmbeddings(model_path=EMBEDDING_MODEL_PATH)
 
     vector_store = Chroma(
@@ -368,6 +410,7 @@ def run_ingestion(file_paths: list[str]):
             ingestion_progress["message"] = f"Error: {filename} - {e}"
 
     retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+    mark_embedding_index_matches()
     ingestion_progress["status"] = "completed"
     ingestion_progress["message"] = f"Ingested {total} file(s) successfully"
     
@@ -687,7 +730,7 @@ def stream_chat(req: ChatRequest):
 
     kwargs = {
         "messages": messages,
-        "temperature": req.temperature if req.temperature is not None else 0.7,
+        "temperature": req.temperature if req.temperature is not None else 0.3,
         "max_tokens": req.max_tokens or 8192,
     }
     if use_fc:
