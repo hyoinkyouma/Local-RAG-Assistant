@@ -50,7 +50,7 @@ def main():
         sys.executable, "-m", "PyInstaller",
         "--clean",
         "--noconfirm",
-        "--name", "LocalRAG",
+        "--name", "DocuStoreLocalAssistant",
         "--onedir",                     # directory bundle (faster startup)
         "--strip",                      # strip debug symbols from binaries
         "--add-data", f"{static_src}{os.pathsep}static",
