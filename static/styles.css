@@ -45,6 +45,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .dark #sun-icon { display: block; }
 .dark #moon-icon { display: none; }
 
+/* ── Thinking toggle icons (active = thinking/streaming disabled) ── */
+#thinking-toggle #bulb-on { display: inline; }
+#thinking-toggle #bulb-off { display: none; }
+#thinking-toggle.active #bulb-on { display: none; }
+#thinking-toggle.active #bulb-off { display: inline; }
+
 /* ── Dark mode overrides ── */
 .dark body,
 .dark .bg-gray-50 { background-color: #111827; }
