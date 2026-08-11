@@ -570,7 +570,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Local RAG API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="DocuStore Local Assistant API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -707,8 +707,12 @@ def build_messages_and_context(req: ChatRequest):
         system_content = (
             "You are a helpful assistant. Answer the user's question concisely."
             f"{tool_note}{force_search}\n"
-            "Do NOT include any thinking, reasoning, or analysis. Only provide the final answer."
+            "Do NOT include any thinking, reasoning, or analysis. Only propyvide the final answer."
         )
+
+    if not req.enable_thinking:
+        system_content += "- Do NOT include any thinking, reasoning, or analysis. Only provide the final answer."
+
     messages = [{"role": "system", "content": system_content}]
     for m in req.messages:
         msg = {"role": m.role}

@@ -44,9 +44,9 @@ def build_pyinstaller(name, root, dist_dir, build_dir):
         sys.executable, "-m", "PyInstaller",
         "--clean",
         "--noconfirm",
-        "--name", name,
-        "--onedir",
-        "--icon", icon_src,
+        "--name", "DocuStoreLocalAssistant",
+        "--onedir",                     # directory bundle (faster startup)
+        "--strip",                      # strip debug symbols from binaries
         "--add-data", f"{static_src}{os.pathsep}static",
         "--add-data", f"{embedding_src}{os.pathsep}models",
         "--exclude", "torch",

@@ -27,7 +27,7 @@ if __name__ == "__main__":
     t.start()
 
     window = webview.create_window(
-        "Local RAG Assistant",
+        "DocuStore Local Assistant",
         LOADING_URL,
         width=1280,
         height=800,
