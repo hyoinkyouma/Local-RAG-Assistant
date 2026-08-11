@@ -10,7 +10,9 @@ python app.py                            # standalone CLI RAG query (no server)
 python -m uvicorn server:app --reload    # dev with auto-reload
 
 # Build distributable
-python build.py                          # PyInstaller → dist/LocalRAG/ (~400 MB)
+python build.py                              # both CPU + CUDA
+python build.py --variant cpu                # CPU-only (~260 MB) → dist/LocalRAG-CPU/
+python build.py --variant cuda               # CUDA-enabled (~2 GB) → dist/LocalRAG-CUDA/
 ```
 
 No tests, no lint/typecheck/CI config exists.
@@ -60,10 +62,12 @@ All under `DATA_ROOT`:
 
 ### Build notes
 - `build.py` runs PyInstaller, bundles `static/` + embedding model; LLMs downloaded at runtime
+- `--variant cpu` builds CPU-only (~260 MB); `--variant cuda` builds CUDA-enabled (~2 GB); default `all` builds both
+- CPU build from source (compiles on first run); CUDA uses prebuilt wheel from GitHub
 - Excludes heavy unused packages: `torch`, `sklearn`, `sentence_transformers`, `transformers`, `langgraph`, `langchain_classic`
 - `--collect-all` only for `chromadb` and `llama_cpp` (native binaries); langchain packages use targeted `--hidden-import`
 - Hidden imports: `uvicorn.logging`, `uvicorn.loops.auto`, `uvicorn.protocols.http.auto`, `ddgs`
-- Build produces ~400 MB (down from ~850 MB by excluding torch etc.)
+- CPU build ~260 MB (down from ~2 GB by excluding CUDA DLLs and using CPU-only llama-cpp)
 - First build takes 15–20 min due to dependency graph; subsequent builds are faster
 
 ## .gitignore (important)

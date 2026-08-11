@@ -8,3 +8,5 @@ env
 /dist/
 *.spec
 *.err
+domains.json
+/chats/*

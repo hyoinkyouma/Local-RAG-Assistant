@@ -29,28 +29,56 @@
  </header>
 
  <!-- ===== CHAT TAB ===== -->
- <main id="tab-chat" class="tab-content flex-1 flex flex-col min-h-0">
- <div id="no-model-banner" class="hidden bg-amber-50 border-b border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2 shrink-0">
- <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
- <span>No chat model loaded. Go to <button onclick="switchTab('settings')" class="font-medium underline hover:text-amber-900">Settings</button> to download one.</span>
- </div>
- <div id="messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4"></div>
- <form id="chat-form" class="border-t border-gray-200 bg-white px-4 py-3 flex gap-2 items-end shrink-0">
- <div class="flex-1 relative">
- <textarea id="chat-input" rows="2" placeholder="Ask a question about your documents..." class="w-full resize-none rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 placeholder-gray-400"></textarea>
- <div class="absolute bottom-2 right-2 flex items-center gap-1">
-  <button id="thinking-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle thinking mode">
-  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+ <main id="tab-chat" class="tab-content flex-1 flex min-h-0">
+  <!-- Sidebar -->
+  <aside id="sidebar" class="bg-white border-r border-gray-200 shrink-0">
+  <div class="p-3 border-b border-gray-200">
+   <button id="sidebar-new-btn" onclick="newChat()" class="sidebar-new-btn w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 sidebar-hide">
+   <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>
+   New Chat
+   </button>
+  </div>
+  <div id="chat-list" class="flex-1 overflow-y-auto p-2 space-y-0.5 sidebar-hide"></div>
+  <div class="p-2 border-t border-gray-200">
+   <button id="sidebar-collapse-btn" class="w-full flex items-center justify-center p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Collapse sidebar">
+   <svg class="w-4 h-4 sidebar-hide" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
+   <svg class="w-4 h-4 hidden" id="sidebar-expand-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+   </button>
+  </div>
+   </aside>
+
+  <div class="flex-1 flex flex-col min-h-0">
+  <div id="no-model-banner" class="hidden bg-amber-50 border-b border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2 shrink-0">
+  <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+  <span>No chat model loaded. Go to <button onclick="switchTab('settings')" class="font-medium underline hover:text-amber-900">Settings</button> to download one.</span>
+  </div>
+  <div id="domain-filter-bar" class="flex items-center gap-2 px-4 py-2 border-b border-gray-200 shrink-0">
+  <label class="text-xs text-gray-500 font-medium">Search domains:</label>
+  <select id="chat-domain-select" class="domain-filter-select rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+  <option value="">All domains</option>
+  </select>
+  </div>
+  <div id="messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4"></div>
+  <form id="chat-form" class="border-t border-gray-200 bg-white px-4 py-3 flex gap-2 items-end shrink-0">
+  <div class="flex-1 relative">
+  <textarea id="chat-input" rows="2" placeholder="Ask a question about your documents..." class="w-full resize-none rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 placeholder-gray-400"></textarea>
+  <div class="absolute bottom-2 right-2 flex items-center gap-1">
+    <button id="rag-toggle" type="button" class="p-1.5 rounded-lg text-blue-600 bg-blue-50 transition-colors active" title="Toggle RAG (document search)">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    </button>
+    <button id="thinking-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle thinking mode">
+   <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+   </button>
+   <button id="web-search-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle web search">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+   </button>
+  <button id="send-btn" type="submit" class="bg-blue-600 text-white rounded-lg p-1.5 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4 20-7z"/></svg>
   </button>
-  <button id="web-search-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle web search">
-  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg>
-  </button>
- <button id="send-btn" type="submit" class="bg-blue-600 text-white rounded-lg p-1.5 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
- <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4 20-7z"/></svg>
- </button>
- </div>
- </div>
- </form>
+  </div>
+  </div>
+  </form>
+  </div>
  </main>
 
  <!-- ===== SETTINGS TAB ===== -->
@@ -80,9 +108,9 @@
  </div>
  </section>
 
- <hr class="border-gray-200">
+  <hr class="border-gray-200 my-6">
 
- <!-- ── Document Management ── -->
+  <!-- ── Document Management ── -->
  <section>
  <h2 class="text-lg font-semibold text-gray-800 mb-4">Document Management</h2>
 
@@ -93,26 +121,53 @@
  <input id="file-input" type="file" multiple accept=".pdf,.txt" class="hidden">
  </div>
 
- <div id="file-list" class="mt-4 space-y-1.5"></div>
+  <div id="file-list" class="mt-4 space-y-1.5"></div>
 
- <div id="ingestion-controls" class="mt-4 flex gap-2">
- <button id="ingest-btn" class="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">Process &amp; Ingest</button>
- <button id="clear-btn" class="px-5 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300">Clear Uploads</button>
- </div>
+  <div id="ingestion-controls" class="mt-4 flex gap-2">
+  <button id="ingest-btn" class="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">Process &amp; Ingest</button>
+  <button id="clear-btn" class="px-5 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300">Clear Uploads</button>
+  </div>
 
- <div id="progress-area" class="mt-4 hidden">
- <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">
- <span id="progress-message">Processing...</span>
- <span id="progress-percent">0%</span>
- </div>
- <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
- <div id="progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
- </div>
- </div>
- </section>
+  <div class="mt-4 flex items-center gap-2">
+  <label class="text-sm text-gray-600">Ingest into:</label>
+  <select id="ingest-domain-select" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+  </div>
 
- </div>
- </main>
+  <div id="progress-area" class="mt-4 hidden">
+  <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">
+  <span id="progress-message">Processing...</span>
+  <span id="progress-percent">0%</span>
+  </div>
+  <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+  <div id="progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
+  </div>
+  </div>
+  </section>
+
+  <hr class="border-gray-200 my-6">
+
+  <!-- ── Domain Management ── -->
+  <section>
+  <h2 class="text-lg font-semibold text-gray-800 mb-4">Domains</h2>
+  <p class="text-sm text-gray-500 mb-4">Organize documents into domains. Select which domains to search when chatting.</p>
+
+  <div class="flex items-center gap-2 mb-3">
+  <label class="text-sm text-gray-600">View files in:</label>
+  <select id="domain-files-selector" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+  </div>
+
+  <div id="domain-files-list" class="space-y-1.5 mb-4"></div>
+
+  <div class="flex gap-2 mb-4">
+  <input id="domain-name-input" type="text" placeholder="New domain name..." class="flex-1 rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400">
+  <button id="create-domain-btn" class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">Create</button>
+  </div>
+
+  <div id="domain-list" class="space-y-1.5"></div>
+  </section>
+
+  </div>
+  </main>
 
  <script src="/static/app.js"></script>
 </body>

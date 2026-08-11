@@ -18,6 +18,10 @@ def start_server():
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
 
 
+def on_closing():
+    os._exit(0)
+
+
 if __name__ == "__main__":
     t = threading.Thread(target=start_server, daemon=True)
     t.start()
@@ -30,4 +34,5 @@ if __name__ == "__main__":
         resizable=True,
         min_size=(800, 600),
     )
+    window.events.closing += on_closing
     webview.start()

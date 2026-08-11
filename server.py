@@ -3,7 +3,9 @@ import sys
 import time
 import logging
 import threading
+import gc
 import shutil
+import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -31,6 +33,8 @@ DATA_PATH = os.path.join(DATA_ROOT, "data")
 UPLOAD_PATH = os.path.join(DATA_ROOT, "uploads")
 MODELS_DIR = os.path.join(DATA_ROOT, "models")
 PERSIST_DIRECTORY = os.path.join(DATA_ROOT, "chroma_db")
+CHATS_DIR = os.path.join(DATA_ROOT, "chats")
+DOMAINS_CONFIG = os.path.join(DATA_ROOT, "domains.json")
 EMBEDDING_MODEL_PATH = os.path.join(RES_DIR, "models", "all-MiniLM-L6-v2-ggml-model-f16.gguf")
 EMBEDDING_MODEL_INFO = {
     "repo_id": "second-state/All-MiniLM-L6-v2-Embedding-GGUF",
@@ -38,6 +42,48 @@ EMBEDDING_MODEL_INFO = {
 }
 LLM_MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 CURRENT_MODEL_FILE = os.path.join(MODELS_DIR, "current_model.txt")
+
+# ── Domain helpers ──
+
+def load_domains() -> list[str]:
+    if os.path.exists(DOMAINS_CONFIG):
+        with open(DOMAINS_CONFIG) as f:
+            return json.load(f)
+    return ["General"]
+
+def save_domains(domains: list[str]):
+    os.makedirs(os.path.dirname(DOMAINS_CONFIG), exist_ok=True)
+    with open(DOMAINS_CONFIG, "w") as f:
+        json.dump(domains, f, indent=2)
+
+def get_domain_path(domain: str) -> str:
+    return os.path.join(DATA_ROOT, "data", domain)
+
+def get_domain_files(domain: str) -> list[dict]:
+    dpath = get_domain_path(domain)
+    if not os.path.isdir(dpath):
+        return []
+    files = []
+    for fname in sorted(os.listdir(dpath)):
+        fpath = os.path.join(dpath, fname)
+        if os.path.isfile(fpath):
+            files.append({"name": fname, "size": os.path.getsize(fpath)})
+    return files
+
+def ensure_domains():
+    """Migrate old flat data/ into domain structure on first run."""
+    if os.path.exists(DOMAINS_CONFIG):
+        return
+    domains = ["General"]
+    dst = get_domain_path("General")
+    os.makedirs(dst, exist_ok=True)
+    for fname in os.listdir(DATA_PATH):
+        fpath = os.path.join(DATA_PATH, fname)
+        if os.path.isfile(fpath):
+            shutil.move(fpath, os.path.join(dst, fname))
+    save_domains(domains)
+
+# ── /Domain helpers ──
 
 AVAILABLE_MODELS = {
     "qwen2.5-1.5b-instruct": {
@@ -198,6 +244,7 @@ class LlamaCppEmbeddings(Embeddings):
 
 llm_instance = None
 retriever = None
+vector_store = None
 embeddings_instance = None
 ingestion_progress = {"status": "idle", "current": 0, "total": 0, "current_file": "", "message": ""}
 download_progress = {"status": "idle", "progress": 0, "message": ""}
@@ -278,7 +325,13 @@ def ensure_embedding_model() -> bool:
 
 
 def build_resources():
-    global llm_instance, retriever, embeddings_instance
+    global llm_instance, retriever, vector_store, embeddings_instance
+
+    if os.path.isdir(PERSIST_DIRECTORY):
+        try:
+            shutil.rmtree(PERSIST_DIRECTORY)
+        except Exception:
+            pass
 
     if not ensure_embedding_model():
         log.error("Embedding model unavailable. RAG features disabled.")
@@ -299,20 +352,29 @@ def build_resources():
     else:
         log.warning("No chat model found. Use Settings to download one.")
 
-    log.info("Loading and Chunking Documents")
-    pdf_files = [f for f in os.listdir(DATA_PATH) if f.endswith(".pdf")]
-    if pdf_files:
-        raw_documents = []
-        for pdf_file in pdf_files:
-            loader = PyPDFLoader(os.path.join(DATA_PATH, pdf_file))
-            raw_documents.extend(loader.load())
-    else:
-        loader = DirectoryLoader(DATA_PATH, glob="*.txt", loader_cls=TextLoader)
-        raw_documents = loader.load()
+    log.info("Loading and Chunking Documents from all domains")
+    raw_documents = []
+    domains = load_domains()
+    for domain in domains:
+        dpath = get_domain_path(domain)
+        if not os.path.isdir(dpath):
+            continue
+        pdf_files = [f for f in os.listdir(dpath) if f.endswith(".pdf")]
+        if pdf_files:
+            for pdf_file in pdf_files:
+                loader = PyPDFLoader(os.path.join(dpath, pdf_file))
+                for doc in loader.load():
+                    doc.metadata["domain"] = domain
+                    raw_documents.append(doc)
+        else:
+            loader = DirectoryLoader(dpath, glob="*.txt", loader_cls=TextLoader)
+            for doc in loader.load():
+                doc.metadata["domain"] = domain
+                raw_documents.append(doc)
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     docs = text_splitter.split_documents(raw_documents)
-    log.info(f"Loaded {len(docs)} document chunks")
+    log.info(f"Loaded {len(docs)} document chunks across {len(domains)} domain(s): {domains}")
 
     if docs:
         log.info("Creating Vector Store")
@@ -321,24 +383,29 @@ def build_resources():
             embedding=embeddings_instance,
             persist_directory=PERSIST_DIRECTORY
         )
-        retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+        retriever = vector_store.as_retriever(search_kwargs={"k": 4})
     else:
         log.info("No documents found — vector store will be created on first ingestion")
 
 
-def run_ingestion(file_paths: list[str]):
-    global ingestion_progress, retriever, embeddings_instance
+def run_ingestion(file_paths: list[str], domain: str = "General"):
+    global ingestion_progress, retriever, vector_store, embeddings_instance
 
     embeddings = embeddings_instance or LlamaCppEmbeddings(model_path=EMBEDDING_MODEL_PATH)
 
-    vector_store = Chroma(
-        persist_directory=PERSIST_DIRECTORY,
-        embedding_function=embeddings
-    )
+    if vector_store is None:
+        vector_store = Chroma(
+            persist_directory=PERSIST_DIRECTORY,
+            embedding_function=embeddings
+        )
+
+    domain_dir = get_domain_path(domain)
+    os.makedirs(domain_dir, exist_ok=True)
 
     total = len(file_paths)
     ingestion_progress["status"] = "running"
     ingestion_progress["total"] = total
+    ingestion_progress["domain"] = domain
 
     for i, file_path in enumerate(file_paths):
         filename = os.path.basename(file_path)
@@ -353,13 +420,16 @@ def run_ingestion(file_paths: list[str]):
                 loader = TextLoader(file_path, encoding="utf-8")
             raw_docs = loader.load()
 
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             docs = text_splitter.split_documents(raw_docs)
+
+            for doc in docs:
+                doc.metadata["domain"] = domain
 
             ingestion_progress["message"] = f"Indexing {filename} ({len(docs)} chunks)..."
             vector_store.add_documents(docs)
 
-            dest = os.path.join(DATA_PATH, filename)
+            dest = os.path.join(domain_dir, filename)
             shutil.move(file_path, dest)
 
             ingestion_progress["message"] = f"Processed {filename} ({len(docs)} chunks)"
@@ -367,9 +437,9 @@ def run_ingestion(file_paths: list[str]):
             log.warning(f"Error processing {filename}: {e}")
             ingestion_progress["message"] = f"Error: {filename} - {e}"
 
-    retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
     ingestion_progress["status"] = "completed"
-    ingestion_progress["message"] = f"Ingested {total} file(s) successfully"
+    ingestion_progress["message"] = f"Ingested {total} file(s) into '{domain}'"
     
 
 
@@ -465,21 +535,26 @@ def requires_web_search(query: str) -> bool:
     return False
 
 
-def web_search(query: str, max_results: int = 3) -> str:
+def web_search(query: str, max_results: int = 3) -> tuple[str, list[dict]]:
+    """Return (formatted_text, citations_list) where each citation has source and content."""
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         snippets = []
+        citations = []
         for r in results:
             title = r.get("title", "")
             body = r.get("body", "")
+            link = r.get("link", r.get("href", ""))
             snippets.append(f"Title: {title}\n{body}")
+            if link:
+                citations.append({"source": link, "content": (title + " — " + body)[:300]})
         text = "\n\n".join(snippets) if snippets else "No results found."
-        log.info(f"Web search got {len(results)} results, {len(text)} chars")
-        return text
+        log.info(f"Web search got {len(results)} results, {len(text)} chars, {len(citations)} citations")
+        return text, citations
     except Exception as e:
         log.warning(f"Web search failed: {e}")
-        return "Web search failed."
+        return "Web search failed.", []
 
 
 @asynccontextmanager
@@ -487,6 +562,8 @@ async def lifespan(app: FastAPI):
     os.makedirs(DATA_PATH, exist_ok=True)
     os.makedirs(UPLOAD_PATH, exist_ok=True)
     os.makedirs(MODELS_DIR, exist_ok=True)
+    os.makedirs(CHATS_DIR, exist_ok=True)
+    ensure_domains()
     load_current_model_setting()
     detect_gpu()
     build_resources()
@@ -519,12 +596,15 @@ class ChatRequest(BaseModel):
     stream: bool | None = False
     web_search: bool | None = False
     enable_thinking: bool = False
+    disable_rag: bool = False
+    domains: list[str] | None = None
 
 
 class Citation(BaseModel):
     source: str
     page: int | None = None
     content: str
+    url: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -558,23 +638,30 @@ def build_messages_and_context(req: ChatRequest):
             break
 
     doc_chunks = []
-    if retriever is not None:
-        doc_chunks = retriever.invoke(query)
-    rag_context = "\n\n".join(d.page_content for d in doc_chunks)
-
     citations = []
-    seen = set()
-    for d in doc_chunks:
-        src = d.metadata.get("source", "Unknown")
-        page = d.metadata.get("page")
-        key = f"{src}:{page}"
-        if key not in seen:
-            seen.add(key)
-            citations.append(Citation(
-                source=os.path.basename(src),
-                page=page,
-                content=d.page_content[:300]
-            ))
+    rag_context = ""
+    if not req.disable_rag:
+        if vector_store is not None:
+            search_kwargs = {"k": 4}
+            if req.domains:
+                search_kwargs["filter"] = {"domain": {"$in": req.domains}}
+            local_retriever = vector_store.as_retriever(search_kwargs=search_kwargs)
+            doc_chunks = local_retriever.invoke(query)
+        elif retriever is not None:
+            doc_chunks = retriever.invoke(query)
+        rag_context = "\n\n".join(d.page_content for d in doc_chunks)
+        seen = set()
+        for d in doc_chunks:
+            src = d.metadata.get("source", "Unknown")
+            page = d.metadata.get("page")
+            key = f"{src}:{page}"
+            if key not in seen:
+                seen.add(key)
+                citations.append(Citation(
+                    source=os.path.basename(src),
+                    page=page,
+                    content=d.page_content[:300]
+                ))
 
     do_web_search = req.web_search or requires_web_search(query)
     use_fc = supports_function_calling()
@@ -584,7 +671,9 @@ def build_messages_and_context(req: ChatRequest):
     if do_web_search:
         if not use_fc:
             log.info(f"Web search triggered (flag={req.web_search}, intent={do_web_search}) — prompt injection (<{FC_THRESHOLD_B}B)")
-            web_results = web_search(query)
+            web_results, web_citations = web_search(query)
+            for wc in web_citations:
+                citations.append(Citation(source=wc["source"], content=wc["content"], url=wc["source"]))
             rag_context = rag_context + "\n\n---\nWeb search results:\n" + web_results if rag_context else f"Web search results:\n{web_results}"
         else:
             log.info(f"Web search triggered (flag={req.web_search}, intent={do_web_search}) — tool calling")
@@ -596,17 +685,18 @@ def build_messages_and_context(req: ChatRequest):
         elif use_fc:
             extra_inst = "\n- You have access to the web_search tool. Use it to supplement the information below if needed."
         system_content = (
-            "You are a helpful assistant. Answer concisely using the information below.\n"
+            "You are a helpful assistant. Answer the user's question using ONLY the information provided below.\n"
             "\n"
             "Information:\n"
             f"{rag_context}\n"
             "\n"
             "Instructions:\n"
-            "- Answer based on the information above.\n"
-            "- If the information does not contain the answer, say so.\n"
-            "- Keep answers concise.\n"
+            "- Your answer must be based exclusively on the information above. Do not use your own knowledge or training data.\n"
+            "- If the information does not contain the answer, say \"The provided documents do not contain this information.\"\n"
+            "- Keep answers concise and direct.\n"
             "- Use bullet points or numbered lists when appropriate.\n"
             f"{extra_inst}\n"
+            "- Do NOT mention or discuss the format, source, or limitations of the information provided. Just answer the question.\n"
             "- Do NOT include any thinking, reasoning, or analysis. Only provide the final answer."
         )
     else:
@@ -662,14 +752,17 @@ def _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse):
     })
 
 
-def _execute_and_feed(kwargs, content_acc, tcd, query):
-    """Execute a tool call and feed the result into kwargs messages."""
+def _execute_and_feed(kwargs, content_acc, tcd, query, citations):
+    """Execute a tool call, feed the result into kwargs messages, and append citations."""
     name = tcd["name"]
     args = tcd.get("arguments", {})
     search_query = args.get("query", query)
     log.info(f"[exec_tool] name={name} search_query={search_query} content_acc_len={len(content_acc)}")
-    result = web_search(search_query) if name == "web_search" else f"Unknown tool: {name}"
-    log.info(f"[exec_tool] web_search returned {len(result)} chars")
+    result, web_citations = web_search(search_query) if name == "web_search" else (f"Unknown tool: {name}", [])
+    log.info(f"[exec_tool] web_search returned {len(result)} chars, {len(web_citations)} citations")
+
+    for wc in web_citations:
+        citations.append(Citation(source=wc["source"], content=wc["content"], url=wc["source"]))
 
     assistant_msg = {"role": "assistant", "content": content_acc or None, "tool_calls": [
         {"id": f"call_{int(time.time())}_{name}", "type": "function",
@@ -704,7 +797,7 @@ def stream_chat(req: ChatRequest):
         })
 
     yield sse({"type": "citations", "citations": [
-        {"source": c.source, "page": c.page, "content": c.content} for c in citations
+        {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in citations
     ]})
 
     for iteration in range(4 if use_fc else 1):
@@ -742,7 +835,7 @@ def stream_chat(req: ChatRequest):
                         log.info(f"[stream] tool_call complete in first chunk, parsed={tcd is not None}")
                         if tcd:
                             yield from _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse)
-                            _execute_and_feed(kwargs, content_acc, tcd, query)
+                            _execute_and_feed(kwargs, content_acc, tcd, query, citations)
                             iter_called_tool = True
                             content_acc = ""
                             in_tc = False
@@ -759,7 +852,7 @@ def stream_chat(req: ChatRequest):
                     log.info(f"[stream] tool_call closed, parsed={tcd is not None}")
                     if tcd:
                         yield from _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse)
-                        _execute_and_feed(kwargs, content_acc, tcd, query)
+                        _execute_and_feed(kwargs, content_acc, tcd, query, citations)
                         kwargs.pop("tools", None)
                         iter_called_tool = True
                         content_acc = ""
@@ -837,12 +930,19 @@ def stream_chat(req: ChatRequest):
 
         if not in_tc:
             log.info(f"[stream] no tool call this iteration, yielding stop + usage")
+            # Re-send citations to include any web citations added during tool calls
+            yield sse({"type": "citations", "citations": [
+                {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in citations
+            ]})
             yield content_chunk("", finish_reason or "stop")
             yield sse({"type": "usage", "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
         if not in_tc:
             break
     else:
         log.info(f"[stream] outer loop exhausted (max iterations)")
+        yield sse({"type": "citations", "citations": [
+            {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in citations
+        ]})
         yield content_chunk("", "stop")
 
 
@@ -864,7 +964,7 @@ def non_stream_chat(req: ChatRequest):
         if use_fc and "<tool_call>" in answer:
             tcd = _parse_qwen_tool_call(answer)
             if tcd:
-                _execute_and_feed(kwargs, "", tcd, query)
+                _execute_and_feed(kwargs, "", tcd, query, citations)
                 kwargs.pop("tools", None)
                 continue
 
@@ -940,9 +1040,104 @@ async def clear_uploaded_files():
     return {"status": "cleared"}
 
 
+class IngestRequest(BaseModel):
+    domain: str = "General"
+
+# ── Domain endpoints ──
+
+@app.get("/v1/domains")
+async def list_domains():
+    domains = load_domains()
+    result = []
+    for d in domains:
+        files = get_domain_files(d)
+        result.append({"name": d, "file_count": len(files)})
+    return {"domains": result}
+
+
+@app.post("/v1/domains")
+async def create_domain(body: dict):
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "Domain name is required")
+    domains = load_domains()
+    if name in domains:
+        raise HTTPException(400, f"Domain '{name}' already exists")
+    domains.append(name)
+    save_domains(domains)
+    os.makedirs(get_domain_path(name), exist_ok=True)
+    return {"status": "created", "domain": name}
+
+
+@app.delete("/v1/domains/{name}")
+async def delete_domain(name: str):
+    if name == "General":
+        raise HTTPException(400, "Cannot delete the default 'General' domain")
+    domains = load_domains()
+    if name not in domains:
+        raise HTTPException(404, f"Domain '{name}' not found")
+    domains.remove(name)
+    save_domains(domains)
+    # Remove domain directory
+    dpath = get_domain_path(name)
+    if os.path.isdir(dpath):
+        shutil.rmtree(dpath)
+    # Remove from ChromaDB
+    global vector_store
+    if vector_store is not None:
+        try:
+            vector_store._collection.delete(where={"domain": name})
+        except Exception as e:
+            log.warning(f"Failed to delete ChromaDB entries for domain '{name}': {e}")
+    return {"status": "deleted", "domain": name}
+
+
+@app.get("/v1/domains/{name}/files")
+async def list_domain_files(name: str):
+    domains = load_domains()
+    if name not in domains:
+        raise HTTPException(404, f"Domain '{name}' not found")
+    files = get_domain_files(name)
+    return {"domain": name, "files": files}
+
+
+@app.delete("/v1/domains/{name}/files/{filename:path}")
+async def delete_domain_file(name: str, filename: str):
+    domains = load_domains()
+    if name not in domains:
+        raise HTTPException(404, f"Domain '{name}' not found")
+    fpath = os.path.join(get_domain_path(name), filename)
+    if not os.path.exists(fpath):
+        raise HTTPException(404, "File not found")
+    os.remove(fpath)
+    # Remove chunks for this file from ChromaDB
+    global vector_store
+    if vector_store is not None:
+        try:
+            result = vector_store._collection.get(where={"domain": name})
+            all_ids = result.get("ids", [])
+            all_metadatas = result.get("metadatas", [])
+            file_ids = []
+            for doc_id, meta in zip(all_ids, all_metadatas):
+                source = os.path.basename(meta.get("source", "")) if meta else ""
+                if source == filename:
+                    file_ids.append(doc_id)
+            if file_ids:
+                vector_store._collection.delete(ids=file_ids)
+        except Exception as e:
+            log.warning(f"Failed to delete ChromaDB entries for file '{filename}': {e}")
+    return {"status": "deleted"}
+
+
+# ── /Domain endpoints ──
+
 @app.post("/v1/ingest")
-async def start_ingestion():
+async def start_ingestion(req: IngestRequest = IngestRequest()):
     global ingestion_progress
+
+    domains = load_domains()
+    if req.domain not in domains:
+        raise HTTPException(400, f"Domain '{req.domain}' does not exist. Create it first.")
 
     file_paths = [
         os.path.join(UPLOAD_PATH, f)
@@ -956,9 +1151,9 @@ async def start_ingestion():
         raise HTTPException(400, "Ingestion already in progress")
 
     ingestion_progress = {"status": "running", "current": 0, "total": len(file_paths), "current_file": "", "message": "Starting..."}
-    thread = threading.Thread(target=run_ingestion, args=(file_paths,))
+    thread = threading.Thread(target=run_ingestion, args=(file_paths, req.domain))
     thread.start()
-    return {"status": "started", "file_count": len(file_paths)}
+    return {"status": "started", "file_count": len(file_paths), "domain": req.domain}
 
 
 @app.get("/v1/ingest/progress")
@@ -1024,16 +1219,107 @@ async def select_model(model_key: str):
     if not os.path.exists(model_path):
         raise HTTPException(400, "Model not downloaded yet. Download it first.")
 
+    if llm_instance is not None:
+        log.info(f"Unloading current model: {CURRENT_MODEL}")
+        llm_instance = None
+        gc.collect()
+
     try:
         log.info(f"Loading model: {model_path}")
-        new_llm = Llama(model_path=model_path, n_ctx=4096, verbose=False, n_gpu_layers=get_gpu_layers())
-        llm_instance = new_llm
+        llm_instance = Llama(model_path=model_path, n_ctx=4096, verbose=False, n_gpu_layers=get_gpu_layers())
         CURRENT_MODEL = model_key
         save_current_model_setting(model_key)
         log.info(f"Switched to model: {model_key}")
         return {"status": "ok", "model": model_key}
     except Exception as e:
         raise HTTPException(500, f"Failed to load model: {e}")
+
+
+# ── Chat persistence ───────────────────────────────────────────────────
+
+@app.get("/v1/chats")
+async def list_chats():
+    chats = []
+    for fname in os.listdir(CHATS_DIR):
+        if not fname.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(CHATS_DIR, fname), encoding="utf-8") as f:
+                data = json.load(f)
+            chats.append({
+                "id": data["id"],
+                "title": data.get("title", "New Chat"),
+                "updated_at": data.get("updated_at", ""),
+                "msg_count": len(data.get("messages", [])),
+            })
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
+    chats.sort(key=lambda c: c["updated_at"], reverse=True)
+    return chats
+
+
+@app.post("/v1/chats")
+async def create_chat(body: dict):
+    cid = str(uuid.uuid4())
+    now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    data = {
+        "id": cid,
+        "title": body.get("title", "New Chat"),
+        "created_at": now,
+        "updated_at": now,
+        "messages": body.get("messages", []),
+    }
+    with open(os.path.join(CHATS_DIR, f"{cid}.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return {"id": cid}
+
+
+@app.get("/v1/chats/{chat_id}")
+async def get_chat(chat_id: str):
+    path = os.path.join(CHATS_DIR, f"{chat_id}.json")
+    if not os.path.exists(path):
+        raise HTTPException(404, "Chat not found")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.put("/v1/chats/{chat_id}")
+async def update_chat(chat_id: str, body: dict):
+    path = os.path.join(CHATS_DIR, f"{chat_id}.json")
+    if not os.path.exists(path):
+        raise HTTPException(404, "Chat not found")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if "title" in body:
+        data["title"] = body["title"]
+    if "messages" in body:
+        data["messages"] = body["messages"]
+    data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return {"ok": True}
+
+
+@app.patch("/v1/chats/{chat_id}/title")
+async def update_chat_title(chat_id: str, body: dict):
+    path = os.path.join(CHATS_DIR, f"{chat_id}.json")
+    if not os.path.exists(path):
+        raise HTTPException(404, "Chat not found")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["title"] = body.get("title", "New Chat")
+    data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return {"ok": True}
+
+
+@app.delete("/v1/chats/{chat_id}")
+async def delete_chat(chat_id: str):
+    path = os.path.join(CHATS_DIR, f"{chat_id}.json")
+    if os.path.exists(path):
+        os.remove(path)
+    return {"ok": True}
 
 
 STATIC_DIR = os.path.join(RES_DIR, "static")

@@ -5,7 +5,9 @@ let polling = false;
 let dlPolling = false;
 let webSearchEnabled = false;
 let thinkingEnabled = false;
+let ragEnabled = true;
 let chatHistory = [];
+let currentChatId = null;
 
 // ===== DOM REFS =====
 const $ = (s) => document.querySelector(s);
@@ -29,6 +31,7 @@ const progressBar = $('#progress-bar');
 const progressMsg = $('#progress-message');
 const progressPct = $('#progress-percent');
 const webSearchToggle = $('#web-search-toggle');
+const ragToggle = $('#rag-toggle');
 const thinkingToggle = $('#thinking-toggle');
 const modelList = $('#model-list');
 const dlProgressArea = $('#dl-progress-area');
@@ -36,6 +39,157 @@ const dlProgressBar = $('#dl-progress-bar');
 const dlProgressMsg = $('#dl-progress-message');
 const dlProgressPct = $('#dl-progress-pct');
 const gpuStatus = $('#gpu-status');
+const sidebar = $('#sidebar');
+const chatList = $('#chat-list');
+const sidebarCollapseBtn = $('#sidebar-collapse-btn');
+const sidebarExpandIcon = $('#sidebar-expand-icon');
+const domainNameInput = $('#domain-name-input');
+const createDomainBtn = $('#create-domain-btn');
+const domainList = $('#domain-list');
+const domainFilesSelector = $('#domain-files-selector');
+const domainFilesList = $('#domain-files-list');
+const ingestDomainSelect = $('#ingest-domain-select');
+const chatDomainSelect = $('#chat-domain-select');
+const domainFilterBar = $('#domain-filter-bar');
+
+// ===== SIDEBAR: CHAT PERSISTENCE =====
+
+async function saveCurrentChat() {
+  if (chatHistory.length === 0) return null;
+  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  if (currentChatId) {
+    await fetch(`/v1/chats/${currentChatId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: chatHistory }),
+    });
+    return currentChatId;
+  } else {
+    const resp = await fetch('/v1/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: chatHistory }),
+    });
+    const data = await resp.json();
+    currentChatId = data.id;
+    loadChatList();
+    generateTitle(data.id);
+    return data.id;
+  }
+}
+
+async function loadChatList() {
+  try {
+    const resp = await fetch('/v1/chats');
+    const chats = await resp.json();
+    chatList.innerHTML = chats.map(c => {
+      const active = c.id === currentChatId ? 'active' : '';
+      const time = formatTime(c.updated_at);
+      return `<div class="chat-list-item ${active}" data-id="${c.id}" onclick="switchToChat('${c.id}')">
+        <span class="chat-title">${escapeHtml(c.title)}</span>
+        <span class="chat-time">${time}</span>
+        <button class="chat-del-btn" onclick="event.stopPropagation();deleteChat('${c.id}')" title="Delete">&times;</button>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('Failed to load chats:', e);
+  }
+}
+
+async function switchToChat(id) {
+  if (id === currentChatId) return;
+  await saveCurrentChat();
+  try {
+    const resp = await fetch(`/v1/chats/${id}`);
+    const data = await resp.json();
+    chatHistory = data.messages || [];
+    currentChatId = data.id;
+    messagesEl.innerHTML = '';
+    for (const msg of chatHistory) {
+      addMessage(msg.role, msg.content || '');
+    }
+    document.querySelectorAll('.chat-list-item.active').forEach(el => el.classList.remove('active'));
+    const item = document.querySelector(`.chat-list-item[data-id="${id}"]`);
+    if (item) item.classList.add('active');
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  } catch (e) {
+    console.error('Failed to switch chat:', e);
+  }
+}
+
+async function deleteChat(id) {
+  if (!confirm('Delete this conversation?')) return;
+  try {
+    await fetch(`/v1/chats/${id}`, { method: 'DELETE' });
+    if (currentChatId === id) {
+      currentChatId = null;
+      messagesEl.innerHTML = '';
+      chatHistory = [];
+      addMessage('assistant', 'Hello! I can answer questions about your documents. Upload files in Settings to expand my knowledge. If no model is loaded, go to Settings to download and activate one.');
+    }
+    loadChatList();
+  } catch (e) {
+    console.error('Failed to delete chat:', e);
+  }
+}
+
+async function generateTitle(chatId) {
+  if (!chatHistory.length) return;
+  let text = chatHistory[0]?.content || '';
+  if (chatHistory[1]) text += '\n' + (chatHistory[1]?.content || '');
+  try {
+    const resp = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'default',
+        messages: [
+          { role: 'system', content: 'Summarize this conversation in 5 words or less. Reply with ONLY the title.' },
+          { role: 'user', content: text.slice(0, 1000) },
+        ],
+        temperature: 0.3,
+        max_tokens: 20,
+        stream: false,
+        web_search: false,
+        enable_thinking: true,
+      }),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    let raw = data.choices?.[0]?.message?.content || '';
+    let title = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\/?\s*think\s*\/?>/gi, '').trim() || 'New Chat';
+    title = title.replace(/^["'\s]+|["'\s]+$/g, '').replace(/[."']+$/, '');
+    if (title.length > 60) title = title.slice(0, 60);
+    await fetch(`/v1/chats/${chatId}/title`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title || 'New Chat' }),
+    });
+    loadChatList();
+  } catch (e) {
+    // title generation is non-critical
+  }
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'Z');
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'now';
+  if (diff < 3600) return Math.round(diff / 60) + 'm';
+  if (diff < 86400) return Math.round(diff / 3600) + 'h';
+  return d.toLocaleDateString();
+}
+
+// ===== SIDEBAR COLLAPSE =====
+
+sidebarCollapseBtn.addEventListener('click', () => {
+  sidebar.classList.toggle('collapsed');
+  const isCollapsed = sidebar.classList.contains('collapsed');
+  sidebarCollapseBtn.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  sidebarExpandIcon.classList.toggle('hidden', !isCollapsed);
+});
 
 // ===== TAB SWITCHING =====
 tabBtns.forEach(btn => {
@@ -51,7 +205,7 @@ function switchTab(tab) {
   tabChat.classList.toggle('flex', tab === 'chat');
   tabSettings.classList.toggle('hidden', tab !== 'settings');
   tabSettings.classList.toggle('flex', tab === 'settings');
-  if (tab === 'settings') { refreshFileList(); refreshModelList(); }
+  if (tab === 'settings') { refreshFileList(); refreshModelList(); refreshDomainUI(); }
 }
 
 // ===== MODEL LIST =====
@@ -139,9 +293,12 @@ function startDlPolling() {
   }, 1000);
 }
 
-function newChat() {
+async function newChat() {
+  await saveCurrentChat();
   messagesEl.innerHTML = '';
   chatHistory = [];
+  currentChatId = null;
+  document.querySelectorAll('.chat-list-item.active').forEach(el => el.classList.remove('active'));
   addMessage('assistant', 'Hello! I can answer questions about your documents. Upload files in Settings to expand my knowledge. If no model is loaded, go to Settings to download and activate one.');
 }
 
@@ -204,10 +361,23 @@ function renderMarkdown(text) {
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/^(\|.+\|)\n(\|[-:| ]+\|)\n((?:\|.+\|\n?)*)/gm, (_, head, sep, body) => {
+    const headers = head.split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('');
+    const rows = body.trim().split('\n').map(row => {
+      const cells = row.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('');
+      return `<tr>${cells}</tr>`;
+    }).join('');
+    return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
+  });
   const paras = html.split(/\n\n+/);
   return paras.map(p => {
     p = p.trim();
     if (!p) return '';
+    if (/^<h[123]>/.test(p)) return p;
+    if (/^<table>/.test(p)) return p;
     p = p.replace(/\n/g, '<br>');
     return `<p>${p}</p>`;
   }).join('');
@@ -275,22 +445,36 @@ function addMessage(role, content, citations) {
 
   if (role === 'assistant' && citations && citations.length > 0) {
     const citeWrapper = document.createElement('div');
-    citeWrapper.className = 'ml-2 mt-1 space-y-1';
+    citeWrapper.className = 'mt-2 pt-2 border-t border-gray-200 dark:border-gray-600 space-y-1';
     citations.forEach((c) => {
       const cite = document.createElement('div');
       cite.className = 'text-xs';
-      const toggle = document.createElement('button');
-      toggle.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
-      toggle.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2-10H7a2 2 0 00-2 2v14l4-2 4 2 4-2 4 2V6a2 2 0 00-2-2z"/></svg> ${c.source}${c.page != null ? ' (p.' + c.page + ')' : ''}`;
       const body = document.createElement('div');
       body.className = 'citation-body pl-4 text-gray-500';
       body.textContent = c.content;
-      toggle.addEventListener('click', () => body.classList.toggle('open'));
-      cite.appendChild(toggle);
+      const header = document.createElement('div');
+      header.className = 'flex items-center gap-1';
+      if (c.url) {
+        const link = document.createElement('a');
+        link.href = c.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
+        link.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg> ${c.source}`;
+        header.appendChild(link);
+      } else {
+        body.classList.add('open');
+        const toggle = document.createElement('button');
+        toggle.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
+        toggle.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2-10H7a2 2 0 00-2 2v14l4-2 4 2 4-2 4 2V6a2 2 0 00-2-2z"/></svg> ${c.source}${c.page != null ? ' (p.' + c.page + ')' : ''}`;
+        toggle.addEventListener('click', () => body.classList.toggle('open'));
+        header.appendChild(toggle);
+      }
+      cite.appendChild(header);
       cite.appendChild(body);
       citeWrapper.appendChild(cite);
     });
-    div.appendChild(citeWrapper);
+    inner.appendChild(citeWrapper);
   }
 
   messagesEl.appendChild(div);
@@ -310,6 +494,11 @@ function removeTypingIndicator() {
   const el = document.getElementById('typing-indicator');
   if (el) el.remove();
 }
+
+ragToggle.addEventListener('click', () => {
+  ragEnabled = !ragEnabled;
+  ragToggle.classList.toggle('active', ragEnabled);
+});
 
 thinkingToggle.addEventListener('click', () => {
   thinkingEnabled = !thinkingEnabled;
@@ -337,6 +526,7 @@ chatForm.addEventListener('submit', async (e) => {
   addTypingIndicator();
 
   try {
+    const domFilter = chatDomainSelect.value;
     const body = {
       model: 'default',
       messages: [...chatHistory, { role: 'user', content: text }],
@@ -346,6 +536,8 @@ chatForm.addEventListener('submit', async (e) => {
       enable_thinking: thinkingEnabled,
     };
     if (webSearchEnabled) body.web_search = true;
+    if (!ragEnabled) body.disable_rag = true;
+    if (domFilter) body.domains = [domFilter];
     const resp = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -370,6 +562,7 @@ chatForm.addEventListener('submit', async (e) => {
     let rawContent = '';
     let citationsData = null;
     let buffer = '';
+    let searchIndicator = null;
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -400,7 +593,21 @@ chatForm.addEventListener('submit', async (e) => {
           if (!choice) continue;
 
           const delta = choice.delta || {};
+          if (delta.tool_calls) {
+            // Tool call started — show web search indicator
+            if (!searchIndicator) {
+              searchIndicator = document.createElement('div');
+              searchIndicator.className = 'search-indicator';
+              searchIndicator.innerHTML = 'Searching the web <span></span><span></span><span></span>';
+              assistantInner.appendChild(searchIndicator);
+              messagesEl.scrollTop = messagesEl.scrollHeight;
+            }
+          }
           if (delta.content) {
+            if (searchIndicator) {
+              searchIndicator.remove();
+              searchIndicator = null;
+            }
             rawContent += delta.content;
             const rendered = renderContent(rawContent);
             assistantInner.innerHTML = rendered;
@@ -435,27 +642,44 @@ chatForm.addEventListener('submit', async (e) => {
     // Citations after the message
     if (citationsData && citationsData.length > 0) {
       const citeWrapper = document.createElement('div');
-      citeWrapper.className = 'ml-2 mt-1 space-y-1';
+      citeWrapper.className = 'mt-2 pt-2 border-t border-gray-200 dark:border-gray-600 space-y-1';
       citationsData.forEach((c) => {
         const cite = document.createElement('div');
         cite.className = 'text-xs';
-        const toggle = document.createElement('button');
-        toggle.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
-        toggle.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2-10H7a2 2 0 00-2 2v14l4-2 4 2 4-2 4 2V6a2 2 0 00-2-2z"/></svg> ${c.source}${c.page != null ? ' (p.' + c.page + ')' : ''}`;
         const body = document.createElement('div');
         body.className = 'citation-body pl-4 text-gray-500';
         body.textContent = c.content;
-        toggle.addEventListener('click', () => body.classList.toggle('open'));
-        cite.appendChild(toggle);
+        const header = document.createElement('div');
+        header.className = 'flex items-center gap-1';
+        if (c.url) {
+          const link = document.createElement('a');
+          link.href = c.url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
+          link.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg> ${c.source}`;
+          header.appendChild(link);
+        } else {
+          body.classList.add('open');
+          const toggle = document.createElement('button');
+          toggle.className = 'citation-toggle text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1';
+          toggle.innerHTML = `<svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2-10H7a2 2 0 00-2 2v14l4-2 4 2 4-2 4 2V6a2 2 0 00-2-2z"/></svg> ${c.source}${c.page != null ? ' (p.' + c.page + ')' : ''}`;
+          toggle.addEventListener('click', () => body.classList.toggle('open'));
+          header.appendChild(toggle);
+        }
+        cite.appendChild(header);
         cite.appendChild(body);
         citeWrapper.appendChild(cite);
       });
-      assistantDiv.appendChild(citeWrapper);
+      assistantInner.appendChild(citeWrapper);
     }
 
     // Save to history
     chatHistory.push({ role: 'user', content: text });
     chatHistory.push({ role: 'assistant', content: thinkingEnabled ? rawContent : stripThinking(rawContent) });
+
+    // Auto-save to backend
+    await saveCurrentChat();
 
     messagesEl.scrollTop = messagesEl.scrollHeight;
   } catch (err) {
@@ -558,11 +782,150 @@ clearBtn.addEventListener('click', async () => {
   }
 });
 
+// ===== DOMAINS =====
+
+async function loadDomains() {
+  try {
+    const resp = await fetch('/v1/domains');
+    const data = await resp.json();
+    const domains = data.domains || [];
+    return domains;
+  } catch (e) {
+    console.error('Failed to load domains:', e);
+    return [];
+  }
+}
+
+async function loadDomainFiles(domain) {
+  try {
+    const resp = await fetch(`/v1/domains/${encodeURIComponent(domain)}/files`);
+    const data = await resp.json();
+    return data.files || [];
+  } catch (e) {
+    console.error('Failed to load domain files:', e);
+    return [];
+  }
+}
+
+function populateDomainSelectors(domains) {
+  const render = (sel, allLabel) => {
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">${allLabel}</option>` + domains.map(d => `<option value="${d.name}">${d.name}</option>`).join('');
+    if (cur) sel.value = cur;
+  };
+  render(ingestDomainSelect, 'Select domain');
+  render(domainFilesSelector, 'Select domain');
+  render(chatDomainSelect, 'All domains');
+  domainFilterBar.classList.toggle('hidden', domains.length <= 1);
+}
+
+async function refreshDomainUI() {
+  const domains = await loadDomains();
+  populateDomainSelectors(domains);
+  //  domain list
+  domainList.innerHTML = domains.map(d => {
+    const canDelete = d.name !== 'General' ? `<button onclick="deleteDomain('${d.name}')" class="text-gray-400 hover:text-red-500 p-1 shrink-0"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg></button>` : '';
+    return `<div class="domain-item flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200">
+      <span class="text-sm text-gray-700 font-medium">${d.name}</span>
+      <span class="text-xs text-gray-400">${d.file_count} file(s)</span>
+      ${canDelete}
+    </div>`;
+  }).join('');
+  // Show files for selected domain in view selector
+  const selDomain = domainFilesSelector.value;
+  if (selDomain) {
+    const files = await loadDomainFiles(selDomain);
+    renderDomainFileList(selDomain, files);
+  } else {
+    domainFilesList.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">Select a domain above to view its documents</p>';
+  }
+}
+
+function renderDomainFileList(domain, files) {
+  if (!files.length) {
+    domainFilesList.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">No documents in this domain</p>';
+    return;
+  }
+  domainFilesList.innerHTML = files.map(f =>
+    `<div class="file-item flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200">
+      <div class="flex items-center gap-2 min-w-0">
+        <svg class="w-5 h-5 text-gray-400 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M19.5 14.25v-6.3a1.5 1.5 0 00-.44-1.06L14.6 3.44a1.5 1.5 0 00-1.06-.44H6.75A2.25 2.25 0 004.5 5.25v13.5A2.25 2.25 0 006.75 21h6.75"/><path d="M14.25 3.75v4.5a.75.75 0 00.75.75h4.5"/></svg>
+        <span class="text-sm text-gray-700 truncate">${f.name}</span>
+        <span class="text-xs text-gray-400 shrink-0">${formatSize(f.size)}</span>
+      </div>
+      <button onclick="deleteDomainFile('${domain}','${f.name}')" class="text-gray-400 hover:text-red-500 p-1 shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>`
+  ).join('');
+}
+
+async function deleteDomain(name) {
+  if (!confirm(`Delete domain "${name}" and ALL its documents?`)) return;
+  try {
+    const resp = await fetch(`/v1/domains/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!resp.ok) return alert('Failed to delete domain');
+    refreshDomainUI();
+    refreshFileList();
+  } catch (e) {
+    console.error('Delete domain failed:', e);
+  }
+}
+
+async function deleteDomainFile(domain, filename) {
+  if (!confirm(`Delete "${filename}" from domain "${domain}"?`)) return;
+  try {
+    const resp = await fetch(`/v1/domains/${encodeURIComponent(domain)}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    if (!resp.ok) return alert('Failed to delete file');
+    const files = await loadDomainFiles(domain);
+    renderDomainFileList(domain, files);
+  } catch (e) {
+    console.error('Delete domain file failed:', e);
+  }
+}
+
+createDomainBtn.addEventListener('click', async () => {
+  const name = domainNameInput.value.trim();
+  if (!name) return;
+  try {
+    const resp = await fetch('/v1/domains', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      return alert(err.detail || 'Failed to create domain');
+    }
+    domainNameInput.value = '';
+    refreshDomainUI();
+  } catch (e) {
+    alert('Failed to create domain: ' + e.message);
+  }
+});
+
+domainNameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') createDomainBtn.click();
+});
+
+domainFilesSelector.addEventListener('change', async () => {
+  const domain = domainFilesSelector.value;
+  if (!domain) { domainFilesList.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">Select a domain above to view its documents</p>'; return; }
+  const files = await loadDomainFiles(domain);
+  renderDomainFileList(domain, files);
+});
+
 // ===== INGESTION =====
 ingestBtn.addEventListener('click', async () => {
   if (ingestBtn.disabled) return;
+  const domain = ingestDomainSelect.value;
+  if (!domain) { alert('Please select a domain for ingestion'); return; }
   try {
-    const resp = await fetch('/v1/ingest', { method: 'POST' });
+    const resp = await fetch('/v1/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain }),
+    });
     const data = await resp.json();
     if (data.status === 'started') {
       progressArea.classList.remove('hidden');
@@ -594,6 +957,7 @@ function startPolling() {
         if (prog.status === 'completed') {
           progressMsg.textContent = 'Done! ' + (prog.message || '');
           refreshFileList();
+          refreshDomainUI();
           setTimeout(() => { progressArea.classList.add('hidden'); }, 3000);
         }
       }
@@ -629,6 +993,8 @@ darkToggle.addEventListener('click', () => {
 // ===== INIT =====
 async function init() {
   await checkHealth();
+  loadChatList();
+  refreshDomainUI();
   addMessage('assistant', 'Hello! I can answer questions about your documents. Upload files in Settings to expand my knowledge. If no model is loaded, go to Settings to download and activate one.');
 }
 

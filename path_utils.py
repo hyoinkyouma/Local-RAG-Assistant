@@ -10,6 +10,11 @@ def _resolved():
 
 def _data_root():
     if getattr(sys, 'frozen', False):
+        base = os.path.dirname(sys.executable)
+        os.makedirs(base, exist_ok=True)
+        return base
+    return os.path.abspath(".")
+    if getattr(sys, 'frozen', False):
         base = os.environ.get('APPDATA', os.path.expanduser('~'))
         path = os.path.join(base, 'LocalRAG')
         os.makedirs(path, exist_ok=True)
