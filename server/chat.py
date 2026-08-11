@@ -40,7 +40,8 @@ def retrieve_docs(query: str) -> list:
         return doc_chunks
 
 
-def build_messages_and_context(req: ChatRequest):
+def build_context(req: ChatRequest):
+    """Vector retrieval plus web-search decision. Does not execute the web search."""
     query = ""
     for m in reversed(req.messages):
         if m.content and m.role == "user":
@@ -84,24 +85,26 @@ def build_messages_and_context(req: ChatRequest):
     do_web_search = ws_enabled and (req.web_search or (requires_web_search(query) if not use_fc else False))
     log.info(f"[build] query={query[:80]} do_web_search={do_web_search} use_fc={use_fc} ws_enabled={ws_enabled} model_size={get_current_model_param_size()}B rag_chunks={len(doc_chunks)}")
 
-    # Small models (<4B): prompt injection. Large models (>=4B): tool calling.
-    web_citations = []
-    if do_web_search:
-        if not use_fc:
-            log.info(f"Web search triggered (flag={req.web_search}, intent={do_web_search}) — prompt injection (<{FC_THRESHOLD_B}B)")
-            web_results, web_citations_tmp = web_search(query)
-            web_citations = web_citations_tmp
-            for wc in web_citations:
-                candidate_citations.append({
-                    "source": wc["source"],
-                    "page": None,
-                    "content": wc["content"],
-                    "url": wc.get("url") or wc["source"],
-                })
-            rag_context = rag_context + "\n\n---\nWeb search results:\n" + web_results if rag_context else f"Web search results:\n{web_results}"
-        else:
-            log.info(f"Web search triggered (flag={req.web_search}, intent={do_web_search}) — tool calling")
+    return query, candidate_citations, do_web_search, use_fc, tool_available, rag_context
 
+
+def apply_web_search(query: str, candidate_citations: list, rag_context: str):
+    """Execute a web search and merge results into the context and candidate citations."""
+    log.info(f"Web search triggered — prompt injection (<{FC_THRESHOLD_B}B)")
+    web_results, web_citations = web_search(query)
+    for wc in web_citations:
+        candidate_citations.append({
+            "source": wc["source"],
+            "page": None,
+            "content": wc["content"],
+            "url": wc.get("url") or wc["source"],
+        })
+    rag_context = rag_context + "\n\n---\nWeb search results:\n" + web_results if rag_context else f"Web search results:\n{web_results}"
+    return candidate_citations, rag_context
+
+
+def build_messages(req: ChatRequest, rag_context: str, do_web_search: bool, use_fc: bool, tool_available: bool) -> list:
+    """Build the OpenAI-style message list from the retrieved context."""
     if rag_context:
         extra_inst = ""
         if tool_available and do_web_search:
@@ -155,6 +158,15 @@ def build_messages_and_context(req: ChatRequest):
             msg["tool_call_id"] = m.tool_call_id
         messages.append(msg)
 
+    return messages
+
+
+def build_messages_and_context(req: ChatRequest):
+    """Full pipeline: retrieval + (if needed) web search + prompt building."""
+    query, candidate_citations, do_web_search, use_fc, tool_available, rag_context = build_context(req)
+    if do_web_search and not use_fc:
+        candidate_citations, rag_context = apply_web_search(query, candidate_citations, rag_context)
+    messages = build_messages(req, rag_context, do_web_search, use_fc, tool_available)
     return query, candidate_citations, do_web_search, use_fc, messages
 
 
@@ -209,7 +221,29 @@ def _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations):
 
 
 def stream_chat(req: ChatRequest):
-    query, candidate_citations, do_web_search, use_fc, messages = build_messages_and_context(req)
+    now = int(time.time())
+    model_name = req.model
+    chat_id = f"chatcmpl-{now}"
+    resp_parts = []
+
+    def sse(event: dict):
+        return f"data: {json.dumps(event, default=str)}\n\n"
+
+    def status_event(phase: str, message: str):
+        return sse({"type": "status", "phase": phase, "message": message})
+
+    # Phase 1: local document retrieval (status is shown while it runs)
+    rag_active = (not req.disable_rag) and (state.retriever is not None or state.vector_store is not None)
+    if rag_active:
+        yield status_event("searching_documents", "Searching your documents...")
+    query, candidate_citations, do_web_search, use_fc, tool_available, rag_context = build_context(req)
+
+    # Phase 2: web search (prompt injection path for models that can't call tools)
+    if do_web_search and not use_fc:
+        yield status_event("web_search", "Searching the web...")
+        candidate_citations, rag_context = apply_web_search(query, candidate_citations, rag_context)
+
+    messages = build_messages(req, rag_context, do_web_search, use_fc, tool_available)
 
     kwargs = {
         "messages": messages,
@@ -219,13 +253,7 @@ def stream_chat(req: ChatRequest):
     if use_fc and state.web_search_enabled:
         kwargs["tools"] = [WEB_SEARCH_TOOL]
 
-    now = int(time.time())
-    model_name = req.model
-    chat_id = f"chatcmpl-{now}"
-    resp_parts = []
-
-    def sse(event: dict):
-        return f"data: {json.dumps(event, default=str)}\n\n"
+    yield status_event("generating", "Generating response...")
 
     def content_chunk(text: str, finish: str | None = None):
         if text:
@@ -236,6 +264,8 @@ def stream_chat(req: ChatRequest):
         })
 
     for iteration in range(4 if use_fc else 1):
+        if iteration > 0:
+            yield status_event("generating", "Generating response...")
         log.info(f"[stream] iteration={iteration} use_fc={use_fc} do_web_search={do_web_search} messages={len(kwargs['messages'])} tools={'tools' in kwargs}")
         stream = state.llm_instance.create_chat_completion(**kwargs, stream=True)
         content_acc = ""
@@ -270,6 +300,7 @@ def stream_chat(req: ChatRequest):
                         log.info(f"[stream] tool_call complete in first chunk, parsed={tcd is not None}")
                         if tcd:
                             yield from _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse)
+                            yield status_event("web_search", "Searching the web...")
                             _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations)
                             iter_called_tool = True
                             content_acc = ""
@@ -287,6 +318,7 @@ def stream_chat(req: ChatRequest):
                     log.info(f"[stream] tool_call closed, parsed={tcd is not None}")
                     if tcd:
                         yield from _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse)
+                        yield status_event("web_search", "Searching the web...")
                         _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations)
                         kwargs.pop("tools", None)
                         iter_called_tool = True

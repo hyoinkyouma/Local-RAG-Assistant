@@ -36,7 +36,7 @@ def dir_size(path):
 def build_pyinstaller(name, root, dist_dir, build_dir):
     """Run PyInstaller with the standard shared arguments."""
     static_src = os.path.join(root, "static")
-    embedding_src = os.path.join(root, "models", "all-MiniLM-L6-v2-ggml-model-f16.gguf")
+    embedding_src = os.path.join(root, "models", "granite-embedding-english-r2.Q8_0.gguf")
     icon_src = os.path.join(root, "app_icon", "icon_preview.ico")
     entry_point = os.path.join(root, "gui.py")
 
@@ -101,7 +101,7 @@ def main():
     dist_dir = os.path.join(root, "dist")
     build_dir = os.path.join(root, "build")
 
-    embedding_src = os.path.join(root, "models", "all-MiniLM-L6-v2-ggml-model-f16.gguf")
+    embedding_src = os.path.join(root, "models", "granite-embedding-english-r2.Q8_0.gguf")
     if not os.path.exists(embedding_src):
         print(f"ERROR: Embedding model not found at {embedding_src}")
         print("Place the GGUF embedding model in models/ before building.")

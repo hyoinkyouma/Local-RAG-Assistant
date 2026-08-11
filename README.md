@@ -265,8 +265,9 @@ Place PDF or `.txt` files in `data/`. On startup the server loads all PDFs (or `
 All data directories live under `DATA_ROOT` (resolved by `path_utils.py`):
 - `data/` — source documents
 - `uploads/` — staging for new files before ingestion
-- `models/` — downloaded LLM GGUF files + `current_model.txt`
+- `models/` — downloaded LLM GGUF files
 - `chroma_db/` — ChromaDB persistent index (auto-created)
+- `settings.json` — persisted settings: web search switch, domains, current model, embedding index marker
 
 ## Building a Distributable
 

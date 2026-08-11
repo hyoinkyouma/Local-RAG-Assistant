@@ -565,11 +565,14 @@ function addMessage(role, content, citations) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function addTypingIndicator() {
+function addTypingIndicator(label) {
   const div = document.createElement("div");
   div.id = "typing-indicator";
   div.className = "flex justify-start";
-  div.innerHTML = `<div class="bg-gray-100 rounded-2xl px-4 py-3 typing-indicator flex gap-1"><span></span><span></span><span></span></div>`;
+  div.innerHTML = `<div class="bg-gray-100 rounded-2xl px-4 py-3 typing-indicator flex items-center gap-2">
+    <span class="text-xs text-gray-500">${escapeHtml(label || "Thinking")}&hellip;</span>
+    <span class="typing-dots flex gap-1"><span></span><span></span><span></span></span>
+  </div>`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -577,6 +580,21 @@ function addTypingIndicator() {
 function removeTypingIndicator() {
   const el = document.getElementById("typing-indicator");
   if (el) el.remove();
+}
+
+function updateStreamStatus(container, message) {
+  let statusEl = container.querySelector(".stream-status");
+  if (!statusEl) {
+    statusEl = document.createElement("div");
+    statusEl.className = "stream-status";
+    container.appendChild(statusEl);
+  }
+  statusEl.innerHTML = `<span class="typing-dots flex gap-1"><span></span><span></span><span></span></span><span class="text-xs text-gray-500">${escapeHtml(message)}</span>`;
+}
+
+function removeStreamStatus(container) {
+  const statusEl = container.querySelector(".stream-status");
+  if (statusEl) statusEl.remove();
 }
 
 ragToggle.addEventListener("click", () => {
@@ -637,7 +655,7 @@ chatForm.addEventListener("submit", async (e) => {
 
   const msgHtml = text;
   addMessage("user", msgHtml);
-  addTypingIndicator();
+  addTypingIndicator("Thinking");
 
   try {
     const domFilter = chatDomainSelect.value;
@@ -676,6 +694,8 @@ chatForm.addEventListener("submit", async (e) => {
     // Build content progressively
     let rawContent = "";
     let citationsData = null;
+    let contentStarted = false;
+    updateStreamStatus(assistantInner, "Thinking");
 
     if (body.stream) {
       let buffer = "";
@@ -698,6 +718,11 @@ chatForm.addEventListener("submit", async (e) => {
           try {
             const evt = JSON.parse(payload);
 
+            if (evt.type === "status") {
+              if (!contentStarted)
+                updateStreamStatus(assistantInner, evt.message || evt.phase);
+              continue;
+            }
             if (evt.type === "citations") {
               citationsData = evt.citations;
               continue;
@@ -709,6 +734,10 @@ chatForm.addEventListener("submit", async (e) => {
 
             const delta = choice.delta || {};
             if (delta.content) {
+              if (!contentStarted) {
+                contentStarted = true;
+                removeStreamStatus(assistantInner);
+              }
               rawContent += delta.content;
               const rendered = renderContent(rawContent);
               assistantInner.innerHTML = rendered;

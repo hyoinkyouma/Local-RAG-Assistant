@@ -65,8 +65,9 @@ No tests, no lint/typecheck/CI config exists.
 All under `DATA_ROOT`:
 - `data/` — source documents (loaded on startup + after ingestion)
 - `uploads/` — staging for new files before ingestion
-- `models/` — downloaded LLM GGUF files + `current_model.txt`
+- `models/` — downloaded LLM GGUF files
 - `chroma_db/` — ChromaDB persistent index (auto-created)
+- `settings.json` — single persisted settings file: `web_search_enabled`, `domains`, `current_model`, `embedding_model` index marker. Legacy `domains.json`, `models/current_model.txt`, and `chroma_db/embedding_model.txt` are migrated in and removed on first load (`server/settings.py`).
 
 ### Build notes
 - `build.py` runs PyInstaller, bundles `static/` + embedding model; LLMs downloaded at runtime
