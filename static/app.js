@@ -3,7 +3,7 @@ let currentTab = "chat";
 let isSending = false;
 let polling = false;
 let dlPolling = false;
-let webSearchEnabled = false;
+let webSearchEnabled = true; // Web search on by default (master switch)
 let thinkingEnabled = true; // Thinking enabled by default
 let ragEnabled = true;
 let chatHistory = [];
@@ -591,10 +591,39 @@ thinkingToggle.addEventListener("click", () => {
 
 // Initialize thinking toggle to show active (thinking enabled by default)
 thinkingToggle.classList.add("active");
+// Initialize web search toggle to show active (web search on by default)
+webSearchToggle.classList.add("active");
 
-webSearchToggle.addEventListener("click", () => {
-  webSearchEnabled = !webSearchEnabled;
-  webSearchToggle.classList.toggle("active", webSearchEnabled);
+async function syncWebSearchToggle() {
+  try {
+    const resp = await fetch("/v1/settings");
+    const data = await resp.json();
+    webSearchEnabled = !!data.web_search_enabled;
+    webSearchToggle.classList.toggle("active", webSearchEnabled);
+  } catch (e) {
+    console.error("Failed to load settings:", e);
+  }
+}
+
+webSearchToggle.addEventListener("click", async () => {
+  const next = !webSearchEnabled;
+  webSearchToggle.classList.toggle("active", next);
+  try {
+    const resp = await fetch("/v1/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ web_search_enabled: next }),
+    });
+    if (resp.ok) {
+      webSearchEnabled = next;
+    } else {
+      webSearchToggle.classList.toggle("active", webSearchEnabled);
+      alert("Failed to update web search setting");
+    }
+  } catch (e) {
+    webSearchToggle.classList.toggle("active", webSearchEnabled);
+    alert("Failed to update web search setting: " + e.message);
+  }
 });
 
 chatForm.addEventListener("submit", async (e) => {
@@ -606,11 +635,7 @@ chatForm.addEventListener("submit", async (e) => {
   sendBtn.disabled = true;
   isSending = true;
 
-  const msgHtml = webSearchEnabled
-    ? '<span class="inline-flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg> ' +
-      text +
-      "</span>"
-    : text;
+  const msgHtml = text;
   addMessage("user", msgHtml);
   addTypingIndicator();
 
@@ -625,7 +650,6 @@ chatForm.addEventListener("submit", async (e) => {
       stream: thinkingEnabled,
       enable_thinking: thinkingEnabled,
     };
-    if (webSearchEnabled) body.web_search = true;
     if (!ragEnabled) body.disable_rag = true;
     if (domFilter) body.domains = [domFilter];
     const resp = await fetch("/v1/chat/completions", {
@@ -1099,6 +1123,7 @@ darkToggle.addEventListener("click", () => {
 // ===== INIT =====
 async function init() {
   await checkHealth();
+  syncWebSearchToggle();
   loadChatList();
   refreshDomainUI();
   addMessage(
