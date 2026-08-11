@@ -10,15 +10,16 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 import json
+from urllib.parse import quote
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from ddgs import DDGS
 import requests
 
-from langchain_community.document_loaders import TextLoader, PyPDFLoader
+from langchain_community.document_loaders import TextLoader, PyPDFLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_core.embeddings import Embeddings
@@ -104,16 +105,6 @@ AVAILABLE_MODELS = {
         "allow_search": True,
         "description": "IBM Granite 4.1 3B - strong tool calling & RAG, Apache-2.0"
     },
-    "qwen2.5-1.5b-instruct": {
-        "id": "qwen2.5-1.5b-instruct",
-        "name": "Qwen 2.5 1.5B Instruct",
-        "repo_id": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-        "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        "size_human": "~1.1 GB",
-        "param_size_b": 1.5,
-        "allow_search": False,
-        "description": "Good balance of speed and quality for CPU inference"
-    },
     "phi-3-mini-4k-instruct": {
         "id": "phi-3-mini-4k-instruct",
         "name": "Phi-3 Mini 4K Instruct",
@@ -133,26 +124,6 @@ AVAILABLE_MODELS = {
         "param_size_b": 1.0,
         "allow_search": False,
         "description": "Fast and lightweight for basic Q&A"
-    },
-    "llama-3.2-3b-instruct": {
-        "id": "llama-3.2-3b-instruct",
-        "name": "Llama 3.2 3B Instruct",
-        "repo_id": "hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF",
-        "filename": "llama-3.2-3b-instruct-q4_k_m.gguf",
-        "size_human": "~2.0 GB",
-        "param_size_b": 3.0,
-        "allow_search": False,
-        "description": "Higher quality responses, slightly slower"
-    },
-    "qwen3.5-9b-instruct": {
-        "id": "qwen3.5-9b-instruct",
-        "name": "Qwen 3.5 9B Instruct",
-        "repo_id": "bartowski/Qwen_Qwen3.5-9B-GGUF",
-        "filename": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
-        "size_human": "~6.2 GB",
-        "allow_search": True,
-        "param_size_b": 9.0,
-        "description": "WARNING: Experimental, may have performance issues on machines with less than 16GB of System Memory. Qwen 3.5 hybrid architecture, excellent quality for 16GB systems"
     }
 }
 
@@ -640,7 +611,7 @@ def web_search(query: str, max_results: int = 3) -> tuple[str, list[dict]]:
             link = r.get("link", r.get("href", ""))
             snippets.append(f"Title: {title}\n{body}")
             if link:
-                citations.append({"source": link, "content": (title + " — " + body)[:300]})
+                citations.append({"source": link, "content": (title + " — " + body)[:300], "url": link})
         text = "\n\n".join(snippets) if snippets else "No results found."
         log.info(f"Web search got {len(results)} results, {len(text)} chars, {len(citations)} citations")
         return text, citations
@@ -763,6 +734,14 @@ def _significant_tokens(text: str) -> set:
     return {t for t in tokens if (len(t) >= 3 or t.isdigit()) and t not in _STOPWORDS}
 
 
+def _document_url(source: str, page) -> str:
+    """Build a URL that opens a local document in the browser, jumping to page."""
+    url = f"/v1/documents/{quote(source)}"
+    if page is not None:
+        url += f"#page={page + 1}"
+    return url
+
+
 def _grounded_citations(candidates: list[dict], answer: str) -> list[Citation]:
     """Keep only citations whose source content actually overlaps the generated answer."""
     if not candidates or not answer:
@@ -786,7 +765,8 @@ def _grounded_citations(candidates: list[dict], answer: str) -> list[Citation]:
                 grounded.append(Citation(
                     source=c["source"],
                     page=c["page"],
-                    content=c["content"][:300]
+                    content=c["content"][:300],
+                    url=c.get("url") or _document_url(c["source"], c["page"]),
                 ))
     return grounded
 
@@ -822,6 +802,7 @@ def build_messages_and_context(req: ChatRequest):
                 "source": os.path.basename(src),
                 "page": page,
                 "content": d.page_content,
+                "url": None,
             })
 
     use_fc = supports_function_calling()
@@ -843,6 +824,7 @@ def build_messages_and_context(req: ChatRequest):
                     "source": wc["source"],
                     "page": None,
                     "content": wc["content"],
+                    "url": wc.get("url") or wc["source"],
                 })
             rag_context = rag_context + "\n\n---\nWeb search results:\n" + web_results if rag_context else f"Web search results:\n{web_results}"
         else:
@@ -865,7 +847,7 @@ def build_messages_and_context(req: ChatRequest):
             "- If the information does not contain the answer, say so.\n"
             "- If both local information and web search results are present, prefer the local information unless it is outdated or incomplete.\n"
             "- Keep answers concise.\n"
-            "- Use bullet points or numbered lists when appropriate.\n"
+            "- Prefer plain prose. Use bullet points or numbered lists ONLY when the answer genuinely contains multiple distinct items; never use a single bullet for a simple answer.\n"
             f"{extra_inst}\n"
             "- Do NOT mention or discuss the format, source, or limitations of the information provided. Just answer the question.\n"
             "- Do NOT include any thinking, reasoning, or analysis. Only provide the final answer."
@@ -876,7 +858,7 @@ def build_messages_and_context(req: ChatRequest):
         force_search = (" The user needs current information. You MUST use the web_search tool to find the answer before responding."
                         if use_fc and do_web_search else "")
         system_content = (
-            "You are a helpful assistant. Answer the user's question concisely."
+            "You are a helpful assistant. Answer the user's question concisely in plain prose; only use bullet points or numbered lists when the answer genuinely contains multiple distinct items."
             f"{tool_note}{force_search}\n"
             "Do NOT include any thinking, reasoning, or analysis. Only propyvide the final answer."
         )
@@ -903,7 +885,7 @@ def build_messages_and_context(req: ChatRequest):
             msg["tool_call_id"] = m.tool_call_id
         messages.append(msg)
 
-    return query, candidate_citations, do_web_search, use_fc, messages, citations
+    return query, candidate_citations, do_web_search, use_fc, messages
 
 
 def _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse):
@@ -940,6 +922,7 @@ def _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations):
             "source": wc["source"],
             "page": None,
             "content": wc["content"],
+            "url": wc.get("url") or wc["source"],
         })
 
     assistant_msg = {"role": "assistant", "content": content_acc or None, "tool_calls": [
@@ -951,7 +934,7 @@ def _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations):
 
 
 def stream_chat(req: ChatRequest):
-    query, candidate_citations, do_web_search, use_fc, messages, citations = build_messages_and_context(req)
+    query, candidate_citations, do_web_search, use_fc, messages = build_messages_and_context(req)
 
     kwargs = {
         "messages": messages,
@@ -1012,7 +995,7 @@ def stream_chat(req: ChatRequest):
                         log.info(f"[stream] tool_call complete in first chunk, parsed={tcd is not None}")
                         if tcd:
                             yield from _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse)
-                            _execute_and_feed(kwargs, content_acc, tcd, query, citations)
+                            _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations)
                             iter_called_tool = True
                             content_acc = ""
                             in_tc = False
@@ -1074,7 +1057,6 @@ def stream_chat(req: ChatRequest):
                     else:
                         confirm_buf += raw_text
                 else:
-                    # Direct mode: streaming confirmed response text
                     if "</think>" in raw_text:
                         log.info(f"[stream] orphan </think> in direct stream, entering suspicious mode")
                         before, _, after = raw_text.partition("</think>")
@@ -1107,9 +1089,8 @@ def stream_chat(req: ChatRequest):
 
         if not in_tc:
             log.info(f"[stream] no tool call this iteration, yielding stop + usage")
-            # Re-send citations to include any web citations added during tool calls
             yield sse({"type": "citations", "citations": [
-                {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in citations
+                {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in _grounded_citations(candidate_citations, "".join(resp_parts))
             ]})
             yield content_chunk("", finish_reason or "stop")
             yield sse({"type": "usage", "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
@@ -1118,18 +1099,18 @@ def stream_chat(req: ChatRequest):
     else:
         log.info(f"[stream] outer loop exhausted (max iterations)")
         yield sse({"type": "citations", "citations": [
-            {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in citations
+            {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in _grounded_citations(candidate_citations, "".join(resp_parts))
         ]})
         yield content_chunk("", "stop")
 
     grounded = _grounded_citations(candidate_citations, "".join(resp_parts))
     yield sse({"type": "citations", "citations": [
-        {"source": c.source, "page": c.page, "content": c.content} for c in grounded
+        {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in grounded
     ]})
 
 
 def non_stream_chat(req: ChatRequest):
-    query, candidate_citations, do_web_search, use_fc, messages, citations = build_messages_and_context(req)
+    query, candidate_citations, do_web_search, use_fc, messages = build_messages_and_context(req)
 
     kwargs = {
         "messages": messages,
@@ -1312,6 +1293,21 @@ async def delete_domain_file(name: str, filename: str):
 
 
 # ── /Domain endpoints ──
+
+@app.get("/v1/documents/{filename:path}")
+async def serve_document(filename: str):
+    """Serve an ingested document (PDF/TXT) for in-browser viewing. Browsers
+    honor the #page=N fragment to jump to a specific page."""
+    base = os.path.basename(filename)
+    if base != filename or not base:
+        raise HTTPException(400, "Invalid filename")
+    for domain in load_domains():
+        fpath = os.path.join(get_domain_path(domain), base)
+        if os.path.isfile(fpath):
+            media = "application/pdf" if base.lower().endswith(".pdf") else "text/plain; charset=utf-8"
+            return FileResponse(fpath, media_type=media, headers={"Content-Disposition": "inline"})
+    raise HTTPException(404, "Document not found")
+
 
 @app.post("/v1/ingest")
 async def start_ingestion(req: IngestRequest = IngestRequest()):

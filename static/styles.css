@@ -58,11 +58,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .dark #sun-icon { display: block; }
 .dark #moon-icon { display: none; }
 
-/* ── Thinking toggle icons (active = thinking/streaming disabled) ── */
-#thinking-toggle #bulb-on { display: inline; }
-#thinking-toggle #bulb-off { display: none; }
-#thinking-toggle.active #bulb-on { display: none; }
-#thinking-toggle.active #bulb-off { display: inline; }
+/* ── Thinking toggle (active = thinking/streaming enabled by default) ── */
+/* Icon changes are handled dynamically, active state shows thinking is on */
 
 /* ── Dark mode overrides ── */
 .dark body,

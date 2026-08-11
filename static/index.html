@@ -1,174 +1,461 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" class="h-full">
-<head>
- <meta charset="UTF-8">
- <meta name="viewport" content="width=device-width, initial-scale=1.0">
- <title>DocuStore Local Assistant</title>
- <script src="/static/tailwind.js"></script>
- <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body class="h-full bg-gray-50 flex flex-col">
- <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shrink-0">
- <div class="flex items-center gap-2">
- <svg class="w-6 h-6 text-blue-600"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
- <h1 class="text-lg font-semibold text-gray-800">DocuStore Local Assistant</h1>
- </div>
- <div class="flex items-center gap-2">
-  <button id="dark-toggle" class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100" title="Toggle dark mode">
-  <svg id="sun-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-  <svg id="moon-icon" class="w-5 h-5"fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>
-  </button>
-  <button id="new-chat-btn" class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100" title="New chat" onclick="newChat()">
-  <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>
-  </button>
-  <nav class="flex gap-1 bg-gray-100 rounded-lg p-1">
- <button id="tab-chat-btn" class="tab-btn active px-4 py-1.5 text-sm font-medium rounded-md" data-tab="chat">Chat</button>
- <button id="tab-settings-btn" class="tab-btn px-4 py-1.5 text-sm font-medium rounded-md" data-tab="settings">Settings</button>
- </nav>
- </div>
- </header>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DocuStore Local Assistant</title>
+    <script src="/static/tailwind.js"></script>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="h-full bg-gray-50 flex flex-col">
+    <header
+      class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shrink-0"
+    >
+      <div class="flex items-center gap-2">
+        <svg
+          class="w-6 h-6 text-blue-600"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="M12 2L2 7l10 5 10-5-10-5z" />
+          <path d="M2 17l10 5 10-5" />
+          <path d="M2 12l10 5 10-5" />
+        </svg>
+        <h1 class="text-lg font-semibold text-gray-800">
+          DocuStore Local Assistant
+        </h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button
+          id="dark-toggle"
+          class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+          title="Toggle dark mode"
+        >
+          <svg
+            id="sun-icon"
+            class="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+          >
+            <path
+              d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+            />
+          </svg>
+          <svg
+            id="moon-icon"
+            class="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+          >
+            <path
+              d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"
+            />
+          </svg>
+        </button>
+        <button
+          id="new-chat-btn"
+          class="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+          title="New chat"
+          onclick="newChat()"
+        >
+          <svg
+            class="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+          >
+            <path d="M12 5v14m-7-7h14" />
+          </svg>
+        </button>
+        <nav class="flex gap-1 bg-gray-100 rounded-lg p-1">
+          <button
+            id="tab-chat-btn"
+            class="tab-btn active px-4 py-1.5 text-sm font-medium rounded-md"
+            data-tab="chat"
+          >
+            Chat
+          </button>
+          <button
+            id="tab-settings-btn"
+            class="tab-btn px-4 py-1.5 text-sm font-medium rounded-md"
+            data-tab="settings"
+          >
+            Settings
+          </button>
+        </nav>
+      </div>
+    </header>
 
- <!-- ===== CHAT TAB ===== -->
- <main id="tab-chat" class="tab-content flex-1 flex min-h-0">
-  <!-- Sidebar -->
-  <aside id="sidebar" class="bg-white border-r border-gray-200 shrink-0">
-  <div class="p-3 border-b border-gray-200">
-   <button id="sidebar-new-btn" onclick="newChat()" class="sidebar-new-btn w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 sidebar-hide">
-   <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>
-   New Chat
-   </button>
-  </div>
-  <div id="chat-list" class="flex-1 overflow-y-auto p-2 space-y-0.5 sidebar-hide"></div>
-  <div class="p-2 border-t border-gray-200">
-   <button id="sidebar-collapse-btn" class="w-full flex items-center justify-center p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Collapse sidebar">
-   <svg class="w-4 h-4 sidebar-hide" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
-   <svg class="w-4 h-4 hidden" id="sidebar-expand-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
-   </button>
-  </div>
-   </aside>
+    <!-- ===== CHAT TAB ===== -->
+    <main id="tab-chat" class="tab-content flex-1 flex min-h-0">
+      <!-- Sidebar -->
+      <aside id="sidebar" class="bg-white border-r border-gray-200 shrink-0">
+        <div class="p-3 border-b border-gray-200">
+          <button
+            id="sidebar-new-btn"
+            onclick="newChat()"
+            class="sidebar-new-btn w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 sidebar-hide"
+          >
+            <svg
+              class="w-4 h-4 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M12 5v14m-7-7h14" />
+            </svg>
+            New Chat
+          </button>
+        </div>
+        <div
+          id="chat-list"
+          class="flex-1 overflow-y-auto p-2 space-y-0.5 sidebar-hide"
+        ></div>
+        <div class="p-2 border-t border-gray-200">
+          <button
+            id="sidebar-collapse-btn"
+            class="w-full flex items-center justify-center p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            title="Collapse sidebar"
+          >
+            <svg
+              class="w-4 h-4 sidebar-hide"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M15 19l-7-7 7-7" />
+            </svg>
+            <svg
+              class="w-4 h-4 hidden"
+              id="sidebar-expand-icon"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      </aside>
 
-  <div class="flex-1 flex flex-col min-h-0">
-  <div id="no-model-banner" class="hidden bg-amber-50 border-b border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2 shrink-0">
-  <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
-  <span>No chat model loaded. Go to <button onclick="switchTab('settings')" class="font-medium underline hover:text-amber-900">Settings</button> to download one.</span>
-  </div>
-  <div id="domain-filter-bar" class="flex items-center gap-2 px-4 py-2 border-b border-gray-200 shrink-0">
-  <label class="text-xs text-gray-500 font-medium">Search domains:</label>
-  <select id="chat-domain-select" class="domain-filter-select rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
-  <option value="">All domains</option>
-  </select>
-  </div>
-  <div id="messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4"></div>
-  <form id="chat-form" class="border-t border-gray-200 bg-white px-4 py-3 flex gap-2 items-end shrink-0">
-  <div class="flex-1 relative">
-  <textarea id="chat-input" rows="2" placeholder="Ask a question about your documents..." class="w-full resize-none rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 placeholder-gray-400"></textarea>
-  <div class="absolute bottom-2 right-2 flex items-center gap-1">
-    <button id="rag-toggle" type="button" class="p-1.5 rounded-lg text-blue-600 bg-blue-50 transition-colors active" title="Toggle RAG (document search)">
-    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-    </button>
-    <button id="thinking-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle thinking mode">
-   <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-   </button>
-   <button id="web-search-toggle" type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Toggle web search">
-    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-   </button>
-  <button id="send-btn" type="submit" class="bg-blue-600 text-white rounded-lg p-1.5 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4 20-7z"/></svg>
-  </button>
-  </div>
-  </div>
-  </form>
-  </div>
- </main>
+      <div class="flex-1 flex flex-col min-h-0">
+        <div
+          id="no-model-banner"
+          class="hidden bg-amber-50 border-b border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2 shrink-0"
+        >
+          <svg
+            class="w-5 h-5 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+          >
+            <path
+              d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+            />
+          </svg>
+          <span
+            >No chat model loaded. Go to
+            <button
+              onclick="switchTab('settings')"
+              class="font-medium underline hover:text-amber-900"
+            >
+              Settings
+            </button>
+            to download one.</span
+          >
+        </div>
+        <div
+          id="domain-filter-bar"
+          class="flex items-center gap-2 px-4 py-2 border-b border-gray-200 shrink-0"
+        >
+          <label class="text-xs text-gray-500 font-medium"
+            >Search domains:</label
+          >
+          <select
+            id="chat-domain-select"
+            class="domain-filter-select rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All domains</option>
+          </select>
+        </div>
+        <div
+          id="messages"
+          class="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+        ></div>
+        <form
+          id="chat-form"
+          class="border-t border-gray-200 bg-white px-4 py-3 flex gap-2 items-end shrink-0"
+        >
+          <div class="flex-1 relative">
+            <textarea
+              id="chat-input"
+              rows="2"
+              placeholder="Ask a question about your documents..."
+              class="w-full resize-none rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12 placeholder-gray-400"
+            ></textarea>
+            <div class="absolute bottom-2 right-2 flex items-center gap-1">
+              <button
+                id="rag-toggle"
+                type="button"
+                class="p-1.5 rounded-lg text-blue-600 bg-blue-50 transition-colors active"
+                title="Toggle RAG (document search)"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                  <path d="M2 17l10 5 10-5" />
+                  <path d="M2 12l10 5 10-5" />
+                </svg>
+              </button>
+              <button
+                id="thinking-toggle"
+                type="button"
+                class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors active"
+                title="Toggle thinking mode"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                  />
+                </svg>
+              </button>
+              <button
+                id="web-search-toggle"
+                type="button"
+                class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                title="Toggle web search"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M2 12h20" />
+                  <path
+                    d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"
+                  />
+                </svg>
+              </button>
+              <button
+                id="send-btn"
+                type="submit"
+                class="bg-blue-600 text-white rounded-lg p-1.5 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M22 2L11 13" />
+                  <path d="M22 2L15 22l-4-9-9-4 20-7z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </main>
 
- <!-- ===== SETTINGS TAB ===== -->
- <main id="tab-settings" class="tab-content flex-1 hidden flex-col min-h-0 overflow-y-auto">
- <div class="p-6 max-w-3xl mx-auto w-full space-y-8">
+    <!-- ===== SETTINGS TAB ===== -->
+    <main
+      id="tab-settings"
+      class="tab-content flex-1 hidden flex-col min-h-0 overflow-y-auto"
+    >
+      <div class="p-6 max-w-3xl mx-auto w-full space-y-8">
+        <!-- ── Model Management ── -->
+        <section>
+          <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            Model Management
+          </h2>
+          <p class="text-sm text-gray-500 mb-4">
+            Select which chat model to use. Models are downloaded from Hugging
+            Face and stored locally.
+          </p>
 
- <!-- ── Model Management ── -->
- <section>
- <h2 class="text-lg font-semibold text-gray-800 mb-4">Model Management</h2>
- <p class="text-sm text-gray-500 mb-4">Select which chat model to use. Models are downloaded from Hugging Face and stored locally.</p>
+          <div id="model-list" class="space-y-3"></div>
 
-  <div id="model-list" class="space-y-3"></div>
+          <div class="mt-4 flex items-center gap-2 text-xs text-gray-500">
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9z"
+              />
+            </svg>
+            <span
+              >GPU Acceleration: <span id="gpu-status">Detecting...</span></span
+            >
+          </div>
 
-  <div class="mt-4 flex items-center gap-2 text-xs text-gray-500">
-  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9z"/></svg>
-  <span>GPU Acceleration: <span id="gpu-status">Detecting...</span></span>
-  </div>
+          <div
+            id="dl-progress-area"
+            class="hidden mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200"
+          >
+            <div
+              class="flex items-center justify-between text-sm text-gray-600 mb-1.5"
+            >
+              <span id="dl-progress-message">Starting...</span>
+              <span id="dl-progress-pct">0%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+              <div
+                id="dl-progress-bar"
+                class="bg-blue-600 h-3 rounded-full transition-all duration-300"
+                style="width: 0%"
+              ></div>
+            </div>
+          </div>
+        </section>
 
- <div id="dl-progress-area" class="hidden mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
- <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">
- <span id="dl-progress-message">Starting...</span>
- <span id="dl-progress-pct">0%</span>
- </div>
- <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
- <div id="dl-progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
- </div>
- </div>
- </section>
+        <hr class="border-gray-200 my-6" />
 
-  <hr class="border-gray-200 my-6">
+        <!-- ── Document Management ── -->
+        <section>
+          <h2 class="text-lg font-semibold text-gray-800 mb-4">
+            Document Management
+          </h2>
 
-  <!-- ── Document Management ── -->
- <section>
- <h2 class="text-lg font-semibold text-gray-800 mb-4">Document Management</h2>
+          <div
+            id="drop-zone"
+            class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors"
+          >
+            <svg
+              class="w-10 h-10 mx-auto text-gray-400 mb-3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              viewBox="0 0 24 24"
+            >
+              <path d="M12 16V4m0 0L8 8m4-4l4 4" />
+              <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+            </svg>
+            <p class="text-sm text-gray-500">
+              Drop PDF or text files here, or
+              <span class="text-blue-600 font-medium">browse</span>
+            </p>
+            <p class="text-xs text-gray-400 mt-1">Multiple files accepted</p>
+            <input
+              id="file-input"
+              type="file"
+              multiple
+              accept=".pdf,.txt"
+              class="hidden"
+            />
+          </div>
 
- <div id="drop-zone" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors">
- <svg class="w-10 h-10 mx-auto text-gray-400 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
- <p class="text-sm text-gray-500">Drop PDF or text files here, or <span class="text-blue-600 font-medium">browse</span></p>
- <p class="text-xs text-gray-400 mt-1">Multiple files accepted</p>
- <input id="file-input" type="file" multiple accept=".pdf,.txt" class="hidden">
- </div>
+          <div id="file-list" class="mt-4 space-y-1.5"></div>
 
-  <div id="file-list" class="mt-4 space-y-1.5"></div>
+          <div id="ingestion-controls" class="mt-4 flex gap-2">
+            <button
+              id="ingest-btn"
+              class="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Process &amp; Ingest
+            </button>
+            <button
+              id="clear-btn"
+              class="px-5 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300"
+            >
+              Clear Uploads
+            </button>
+          </div>
 
-  <div id="ingestion-controls" class="mt-4 flex gap-2">
-  <button id="ingest-btn" class="px-5 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">Process &amp; Ingest</button>
-  <button id="clear-btn" class="px-5 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300">Clear Uploads</button>
-  </div>
+          <div class="mt-4 flex items-center gap-2">
+            <label class="text-sm text-gray-600">Ingest into:</label>
+            <select
+              id="ingest-domain-select"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            ></select>
+          </div>
 
-  <div class="mt-4 flex items-center gap-2">
-  <label class="text-sm text-gray-600">Ingest into:</label>
-  <select id="ingest-domain-select" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
-  </div>
+          <div id="progress-area" class="mt-4 hidden">
+            <div
+              class="flex items-center justify-between text-sm text-gray-600 mb-1.5"
+            >
+              <span id="progress-message">Processing...</span>
+              <span id="progress-percent">0%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+              <div
+                id="progress-bar"
+                class="bg-blue-600 h-3 rounded-full transition-all duration-300"
+                style="width: 0%"
+              ></div>
+            </div>
+          </div>
+        </section>
 
-  <div id="progress-area" class="mt-4 hidden">
-  <div class="flex items-center justify-between text-sm text-gray-600 mb-1.5">
-  <span id="progress-message">Processing...</span>
-  <span id="progress-percent">0%</span>
-  </div>
-  <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-  <div id="progress-bar" class="bg-blue-600 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
-  </div>
-  </div>
-  </section>
+        <hr class="border-gray-200 my-6" />
 
-  <hr class="border-gray-200 my-6">
+        <!-- ── Domain Management ── -->
+        <section>
+          <h2 class="text-lg font-semibold text-gray-800 mb-4">Domains</h2>
+          <p class="text-sm text-gray-500 mb-4">
+            Organize documents into domains. Select which domains to search when
+            chatting.
+          </p>
 
-  <!-- ── Domain Management ── -->
-  <section>
-  <h2 class="text-lg font-semibold text-gray-800 mb-4">Domains</h2>
-  <p class="text-sm text-gray-500 mb-4">Organize documents into domains. Select which domains to search when chatting.</p>
+          <div class="flex items-center gap-2 mb-3">
+            <label class="text-sm text-gray-600">View files in:</label>
+            <select
+              id="domain-files-selector"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            ></select>
+          </div>
 
-  <div class="flex items-center gap-2 mb-3">
-  <label class="text-sm text-gray-600">View files in:</label>
-  <select id="domain-files-selector" class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
-  </div>
+          <div id="domain-files-list" class="space-y-1.5 mb-4"></div>
 
-  <div id="domain-files-list" class="space-y-1.5 mb-4"></div>
+          <div class="flex gap-2 mb-4">
+            <input
+              id="domain-name-input"
+              type="text"
+              placeholder="New domain name..."
+              class="flex-1 rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+            />
+            <button
+              id="create-domain-btn"
+              class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+            >
+              Create
+            </button>
+          </div>
 
-  <div class="flex gap-2 mb-4">
-  <input id="domain-name-input" type="text" placeholder="New domain name..." class="flex-1 rounded-xl border border-gray-300 bg-white text-gray-900 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400">
-  <button id="create-domain-btn" class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">Create</button>
-  </div>
+          <div id="domain-list" class="space-y-1.5"></div>
+        </section>
+      </div>
+    </main>
 
-  <div id="domain-list" class="space-y-1.5"></div>
-  </section>
-
-  </div>
-  </main>
-
- <script src="/static/app.js"></script>
-</body>
+    <script src="/static/app.js"></script>
+  </body>
 </html>
