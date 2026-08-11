@@ -80,7 +80,7 @@ Upload new PDF or text files through the Settings panel. Files are queued and in
 
 The server automatically performs a live DuckDuckGo search for queries about current events, registration, websites, pricing, how-to guides, and other real-world information. Click the globe icon next to the chat input to manually force web search for any query.
 
-**How it works**: For small models (<4B parameters), web search results are injected directly into the prompt as plain text. For larger models (≥4B), a native function-calling loop is used — the model calls a `web_search` tool, and the result is fed back for answer generation. This is configured per-model via `param_size_b` in `server.py`.
+**How it works**: For small models (<4B parameters), web search results are injected directly into the prompt as plain text. For larger models (≥4B), a native function-calling loop is used — the model calls a `web_search` tool, and the result is fed back for answer generation. This is configured per-model via `param_size_b` in `docustore/config.py`.
 
 ### Dark Mode
 
@@ -265,8 +265,9 @@ Place PDF or `.txt` files in `data/`. On startup the server loads all PDFs (or `
 All data directories live under `DATA_ROOT` (resolved by `path_utils.py`):
 - `data/` — source documents
 - `uploads/` — staging for new files before ingestion
-- `models/` — downloaded LLM GGUF files + `current_model.txt`
+- `models/` — downloaded LLM GGUF files
 - `chroma_db/` — ChromaDB persistent index (auto-created)
+- `settings.json` — persisted settings: web search switch, domains, current model, embedding index marker
 
 ## Building a Distributable
 
@@ -290,7 +291,22 @@ The output appears in `dist/LocalRAG/` (~400 MB). Run `LocalRAG.exe` to start th
 ```
 local_rag_poc/
 ├── app.py              # Standalone RAG script
-├── server.py           # FastAPI server with all API endpoints
+├── server/             # FastAPI backend package (python -m server)
+│   ├── __init__.py     # App assembly, lifespan, static mount
+│   ├── __main__.py     # Enables python -m server
+│   ├── config.py       # Constants, paths, AVAILABLE_MODELS, RAG tuning
+│   ├── state.py        # Mutable globals (llm, retriever, progress, ...)
+│   ├── domains.py      # Domain directory helpers
+│   ├── gpu.py          # GPU detection + offload layers
+│   ├── text.py         # Thinking stripping, tool-call parsing, token helpers
+│   ├── schemas.py      # Pydantic request/response models
+│   ├── embeddings.py   # GGUF embedding model + auto-download
+│   ├── llm.py          # Chat model settings, download, loading
+│   ├── index.py        # Chroma index build + ingestion
+│   ├── websearch.py    # DuckDuckGo search + intent classifier
+│   ├── citations.py    # Citation grounding + document URLs
+│   ├── chat.py         # RAG retrieval, prompt building, streaming
+│   └── routes/         # One module per API area (health, files, chats, ...)
 ├── gui.py              # pywebview desktop launcher
 ├── path_utils.py       # Path resolution for dev/bundled modes
 ├── build.py            # PyInstaller build script

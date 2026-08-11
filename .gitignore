@@ -9,5 +9,6 @@ env
 *.spec
 *.err
 domains.json
+settings.json
 /chats/*
-_pycache__/
+__pycache__/

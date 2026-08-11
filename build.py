@@ -36,7 +36,7 @@ def dir_size(path):
 def build_pyinstaller(name, root, dist_dir, build_dir):
     """Run PyInstaller with the standard shared arguments."""
     static_src = os.path.join(root, "static")
-    embedding_src = os.path.join(root, "models", "all-MiniLM-L6-v2-ggml-model-f16.gguf")
+    embedding_src = os.path.join(root, "models", "granite-embedding-english-r2.Q8_0.gguf")
     icon_src = os.path.join(root, "app_icon", "icon_preview.ico")
     entry_point = os.path.join(root, "gui.py")
 
@@ -45,10 +45,9 @@ def build_pyinstaller(name, root, dist_dir, build_dir):
         "--clean",
         "--noconfirm",
         "--name", "DocuStoreLocalAssistant",
+        "--icon", icon_src,
         "--onedir",                     # directory bundle (faster startup)
-        "--strip",                      # strip debug symbols from binaries
         "--add-data", f"{static_src}{os.pathsep}static",
-        "--add-data", f"{embedding_src}{os.pathsep}models",
         "--exclude", "torch",
         "--exclude", "sentence_transformers",
         "--exclude", "sklearn",
@@ -79,8 +78,21 @@ def build_pyinstaller(name, root, dist_dir, build_dir):
     print(f"Running PyInstaller for {name}...")
     subprocess.check_call(cmd, cwd=root)
 
-    bundle = os.path.join(dist_dir, name, f"{name}.exe")
-    size = dir_size(os.path.join(dist_dir, name)) / 1e6
+    # PyInstaller always names the output "DocuStoreLocalAssistant"; rename the
+    # bundle folder and exe to the variant name so it matches the documented
+    # dist/LocalRAG-CPU and dist/LocalRAG-CUDA layout.
+    built_dir = os.path.join(dist_dir, "DocuStoreLocalAssistant")
+    target_dir = os.path.join(dist_dir, name)
+    if os.path.exists(target_dir):
+        shutil.rmtree(target_dir)
+    os.rename(built_dir, target_dir)
+
+    built_exe = os.path.join(target_dir, "DocuStoreLocalAssistant.exe")
+    bundle = os.path.join(target_dir, f"{name}.exe")
+    if os.path.exists(built_exe):
+        os.rename(built_exe, bundle)
+
+    size = dir_size(target_dir) / 1e6
     print(f"\n{name} build complete!")
     print(f"Bundle: {bundle}")
     print(f"Size: {size:.1f} MB\n")
@@ -101,7 +113,7 @@ def main():
     dist_dir = os.path.join(root, "dist")
     build_dir = os.path.join(root, "build")
 
-    embedding_src = os.path.join(root, "models", "all-MiniLM-L6-v2-ggml-model-f16.gguf")
+    embedding_src = os.path.join(root, "models", "granite-embedding-english-r2.Q8_0.gguf")
     if not os.path.exists(embedding_src):
         print(f"ERROR: Embedding model not found at {embedding_src}")
         print("Place the GGUF embedding model in models/ before building.")
@@ -115,11 +127,11 @@ def main():
     # ---------- CPU variant ----------
     if args.variant in ("cpu", "all"):
         # Ensure CPU version of llama-cpp-python is installed
-        subprocess.check_call([
-            sys.executable, "-m", "pip", "install",
-            "--force-reinstall", "--no-cache-dir",
-            "llama-cpp-python==0.3.34",
-        ])
+        # subprocess.check_call([
+        #     sys.executable, "-m", "pip", "install",
+        #     "--force-reinstall", "--no-cache-dir",
+        #     "llama-cpp-python==0.3.34",
+        # ])
         build_pyinstaller("LocalRAG-CPU", root, dist_dir, build_dir)
 
     # ---------- CUDA variant ----------

@@ -3,7 +3,7 @@ let currentTab = "chat";
 let isSending = false;
 let polling = false;
 let dlPolling = false;
-let webSearchEnabled = false;
+let webSearchEnabled = true; // Web search on by default (master switch)
 let thinkingEnabled = true; // Thinking enabled by default
 let ragEnabled = true;
 let chatHistory = [];
@@ -565,11 +565,14 @@ function addMessage(role, content, citations) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function addTypingIndicator() {
+function addTypingIndicator(label) {
   const div = document.createElement("div");
   div.id = "typing-indicator";
   div.className = "flex justify-start";
-  div.innerHTML = `<div class="bg-gray-100 rounded-2xl px-4 py-3 typing-indicator flex gap-1"><span></span><span></span><span></span></div>`;
+  div.innerHTML = `<div class="bg-gray-100 rounded-2xl px-4 py-3 typing-indicator flex items-center gap-2">
+    <span class="text-xs text-gray-500">${escapeHtml(label || "Thinking")}&hellip;</span>
+    <span class="typing-dots flex gap-1"><span></span><span></span><span></span></span>
+  </div>`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -577,6 +580,21 @@ function addTypingIndicator() {
 function removeTypingIndicator() {
   const el = document.getElementById("typing-indicator");
   if (el) el.remove();
+}
+
+function updateStreamStatus(container, message) {
+  let statusEl = container.querySelector(".stream-status");
+  if (!statusEl) {
+    statusEl = document.createElement("div");
+    statusEl.className = "stream-status";
+    container.appendChild(statusEl);
+  }
+  statusEl.innerHTML = `<span class="typing-dots flex gap-1"><span></span><span></span><span></span></span><span class="text-xs text-gray-500">${escapeHtml(message)}</span>`;
+}
+
+function removeStreamStatus(container) {
+  const statusEl = container.querySelector(".stream-status");
+  if (statusEl) statusEl.remove();
 }
 
 ragToggle.addEventListener("click", () => {
@@ -591,10 +609,39 @@ thinkingToggle.addEventListener("click", () => {
 
 // Initialize thinking toggle to show active (thinking enabled by default)
 thinkingToggle.classList.add("active");
+// Initialize web search toggle to show active (web search on by default)
+webSearchToggle.classList.add("active");
 
-webSearchToggle.addEventListener("click", () => {
-  webSearchEnabled = !webSearchEnabled;
-  webSearchToggle.classList.toggle("active", webSearchEnabled);
+async function syncWebSearchToggle() {
+  try {
+    const resp = await fetch("/v1/settings");
+    const data = await resp.json();
+    webSearchEnabled = !!data.web_search_enabled;
+    webSearchToggle.classList.toggle("active", webSearchEnabled);
+  } catch (e) {
+    console.error("Failed to load settings:", e);
+  }
+}
+
+webSearchToggle.addEventListener("click", async () => {
+  const next = !webSearchEnabled;
+  webSearchToggle.classList.toggle("active", next);
+  try {
+    const resp = await fetch("/v1/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ web_search_enabled: next }),
+    });
+    if (resp.ok) {
+      webSearchEnabled = next;
+    } else {
+      webSearchToggle.classList.toggle("active", webSearchEnabled);
+      alert("Failed to update web search setting");
+    }
+  } catch (e) {
+    webSearchToggle.classList.toggle("active", webSearchEnabled);
+    alert("Failed to update web search setting: " + e.message);
+  }
 });
 
 chatForm.addEventListener("submit", async (e) => {
@@ -606,13 +653,9 @@ chatForm.addEventListener("submit", async (e) => {
   sendBtn.disabled = true;
   isSending = true;
 
-  const msgHtml = webSearchEnabled
-    ? '<span class="inline-flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg> ' +
-      text +
-      "</span>"
-    : text;
+  const msgHtml = text;
   addMessage("user", msgHtml);
-  addTypingIndicator();
+  addTypingIndicator("Thinking");
 
   try {
     const domFilter = chatDomainSelect.value;
@@ -625,7 +668,6 @@ chatForm.addEventListener("submit", async (e) => {
       stream: thinkingEnabled,
       enable_thinking: thinkingEnabled,
     };
-    if (webSearchEnabled) body.web_search = true;
     if (!ragEnabled) body.disable_rag = true;
     if (domFilter) body.domains = [domFilter];
     const resp = await fetch("/v1/chat/completions", {
@@ -652,6 +694,8 @@ chatForm.addEventListener("submit", async (e) => {
     // Build content progressively
     let rawContent = "";
     let citationsData = null;
+    let contentStarted = false;
+    updateStreamStatus(assistantInner, "Thinking");
 
     if (body.stream) {
       let buffer = "";
@@ -674,6 +718,11 @@ chatForm.addEventListener("submit", async (e) => {
           try {
             const evt = JSON.parse(payload);
 
+            if (evt.type === "status") {
+              if (!contentStarted)
+                updateStreamStatus(assistantInner, evt.message || evt.phase);
+              continue;
+            }
             if (evt.type === "citations") {
               citationsData = evt.citations;
               continue;
@@ -685,6 +734,10 @@ chatForm.addEventListener("submit", async (e) => {
 
             const delta = choice.delta || {};
             if (delta.content) {
+              if (!contentStarted) {
+                contentStarted = true;
+                removeStreamStatus(assistantInner);
+              }
               rawContent += delta.content;
               const rendered = renderContent(rawContent);
               assistantInner.innerHTML = rendered;
@@ -1099,6 +1152,7 @@ darkToggle.addEventListener("click", () => {
 // ===== INIT =====
 async function init() {
   await checkHealth();
+  syncWebSearchToggle();
   loadChatList();
   refreshDomainUI();
   addMessage(
