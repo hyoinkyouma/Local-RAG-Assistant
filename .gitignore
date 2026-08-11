@@ -10,3 +10,4 @@ env
 *.err
 domains.json
 /chats/*
+_pycache__/
