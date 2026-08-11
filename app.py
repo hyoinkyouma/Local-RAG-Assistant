@@ -1,7 +1,7 @@
 import os
 import logging
 import requests
-from langchain_community.document_loaders import DirectoryLoader, TextLoader, PyPDFLoader
+from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_core.embeddings import Embeddings
@@ -137,17 +137,17 @@ def main():
     llm = LlamaCppLLM(model_path=LLM_MODEL_PATH)
 
     print("--- 2. Loading and Chunking Documents ---")
-    pdf_files = [f for f in os.listdir(DATA_PATH) if f.endswith(".pdf")]
-    if pdf_files:
-        raw_documents = []
-        for pdf_file in pdf_files:
-            loader = PyPDFLoader(os.path.join(DATA_PATH, pdf_file))
-            raw_documents.extend(loader.load())
-    else:
-        loader = DirectoryLoader(DATA_PATH, glob="*.txt", loader_cls=TextLoader)
-        raw_documents = loader.load()
+    raw_documents = []
+    for f in sorted(os.listdir(DATA_PATH)):
+        fpath = os.path.join(DATA_PATH, f)
+        if not os.path.isfile(fpath):
+            continue
+        if f.lower().endswith(".pdf"):
+            raw_documents.extend(PyPDFLoader(fpath).load())
+        elif f.lower().endswith(".txt"):
+            raw_documents.extend(TextLoader(fpath, encoding="utf-8").load())
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=100)
     docs = text_splitter.split_documents(raw_documents)
 
     print("--- 3. Creating Vector Store ---")
@@ -159,7 +159,7 @@ def main():
         embedding=embeddings,
         persist_directory=PERSIST_DIRECTORY
     )
-    retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+    retriever = vector_store.as_retriever(search_kwargs={"k": 6})
 
     print("--- 4. Setting up RAG Prompt & Chain ---")
     system_prompt = (

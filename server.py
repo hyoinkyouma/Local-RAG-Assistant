@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from ddgs import DDGS
 import requests
 
-from langchain_community.document_loaders import DirectoryLoader, TextLoader, PyPDFLoader
+from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_core.embeddings import Embeddings
@@ -35,10 +35,11 @@ MODELS_DIR = os.path.join(DATA_ROOT, "models")
 PERSIST_DIRECTORY = os.path.join(DATA_ROOT, "chroma_db")
 CHATS_DIR = os.path.join(DATA_ROOT, "chats")
 DOMAINS_CONFIG = os.path.join(DATA_ROOT, "domains.json")
-EMBEDDING_MODEL_PATH = os.path.join(RES_DIR, "models", "all-MiniLM-L6-v2-ggml-model-f16.gguf")
+EMBEDDING_MODEL_FILENAME = "granite-embedding-english-r2.Q8_0.gguf"
+EMBEDDING_MODEL_PATH = os.path.join(RES_DIR, "models", EMBEDDING_MODEL_FILENAME)
 EMBEDDING_MODEL_INFO = {
-    "repo_id": "second-state/All-MiniLM-L6-v2-Embedding-GGUF",
-    "filename": "all-MiniLM-L6-v2-ggml-model-f16.gguf",
+    "repo_id": "mradermacher/granite-embedding-english-r2-GGUF",
+    "filename": "granite-embedding-english-r2.Q8_0.gguf",
 }
 LLM_MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 CURRENT_MODEL_FILE = os.path.join(MODELS_DIR, "current_model.txt")
@@ -85,7 +86,24 @@ def ensure_domains():
 
 # ── /Domain helpers ──
 
+# ── RAG tuning ──
+CHUNK_SIZE = 700          # chars per chunk (was 300 — too small, broke sentence context)
+CHUNK_OVERLAP = 100       # overlap between chunks (was 30)
+RETRIEVAL_K = 6           # candidates fetched (was 2 — far too few)
+RELEVANCE_THRESHOLD = 0.35  # min cosine sim for a chunk to reach the LLM
+INDEX_VERSION = 2         # bump to force a clean index rebuild
+
 AVAILABLE_MODELS = {
+    "granite-4.1-3b-instruct": {
+        "id": "granite-4.1-3b-instruct",
+        "name": "Granite 4.1 3B Instruct",
+        "repo_id": "unsloth/granite-4.1-3b-GGUF",
+        "filename": "granite-4.1-3b-UD-Q4_K_XL.gguf",
+        "size_human": "~2.1 GB",
+        "param_size_b": 3.0,
+        "allow_search": True,
+        "description": "IBM Granite 4.1 3B - strong tool calling & RAG, Apache-2.0"
+    },
     "qwen2.5-1.5b-instruct": {
         "id": "qwen2.5-1.5b-instruct",
         "name": "Qwen 2.5 1.5B Instruct",
@@ -93,6 +111,7 @@ AVAILABLE_MODELS = {
         "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
         "size_human": "~1.1 GB",
         "param_size_b": 1.5,
+        "allow_search": False,
         "description": "Good balance of speed and quality for CPU inference"
     },
     "phi-3-mini-4k-instruct": {
@@ -102,6 +121,7 @@ AVAILABLE_MODELS = {
         "filename": "Phi-3-mini-4k-instruct-q4.gguf",
         "size_human": "~2.2 GB",
         "param_size_b": 3.8,
+        "allow_search": True,
         "description": "Microsoft's efficient 3.8B model"
     },
     "llama-3.2-1b-instruct": {
@@ -111,6 +131,7 @@ AVAILABLE_MODELS = {
         "filename": "llama-3.2-1b-instruct-q4_k_m.gguf",
         "size_human": "~0.8 GB",
         "param_size_b": 1.0,
+        "allow_search": False,
         "description": "Fast and lightweight for basic Q&A"
     },
     "llama-3.2-3b-instruct": {
@@ -120,6 +141,7 @@ AVAILABLE_MODELS = {
         "filename": "llama-3.2-3b-instruct-q4_k_m.gguf",
         "size_human": "~2.0 GB",
         "param_size_b": 3.0,
+        "allow_search": False,
         "description": "Higher quality responses, slightly slower"
     },
     "qwen3.5-9b-instruct": {
@@ -128,6 +150,7 @@ AVAILABLE_MODELS = {
         "repo_id": "bartowski/Qwen_Qwen3.5-9B-GGUF",
         "filename": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
         "size_human": "~6.2 GB",
+        "allow_search": True,
         "param_size_b": 9.0,
         "description": "WARNING: Experimental, may have performance issues on machines with less than 16GB of System Memory. Qwen 3.5 hybrid architecture, excellent quality for 16GB systems"
     }
@@ -225,11 +248,9 @@ def _parse_qwen_tool_call(xml_text: str) -> dict | None:
 
 
 def supports_function_calling() -> bool:
-    size = get_current_model_param_size()
-    if size is None:
-        return False
-    return size >= FC_THRESHOLD_B
-
+    if CURRENT_MODEL and CURRENT_MODEL in AVAILABLE_MODELS:
+        return AVAILABLE_MODELS[CURRENT_MODEL].get("allow_search", False)
+    return False
 
 class LlamaCppEmbeddings(Embeddings):
     def __init__(self, model_path: str):
@@ -270,7 +291,6 @@ def load_current_model_setting():
 def save_current_model_setting(key: str):
     with open(CURRENT_MODEL_FILE, "w") as f:
         f.write(key)
-
 
 def get_current_model_param_size() -> float | None:
     if CURRENT_MODEL and CURRENT_MODEL in AVAILABLE_MODELS:
@@ -324,6 +344,69 @@ def ensure_embedding_model() -> bool:
     return False
 
 
+def ensure_embedding_index_matches():
+    """Wipe the persisted Chroma index if it was built with a different embedding model or index version."""
+    marker_path = os.path.join(PERSIST_DIRECTORY, "embedding_model.txt")
+    if os.path.exists(PERSIST_DIRECTORY):
+        expected = f"{EMBEDDING_MODEL_FILENAME}|{INDEX_VERSION}"
+        actual = None
+        if os.path.exists(marker_path):
+            with open(marker_path) as f:
+                actual = f.read().strip()
+        if actual != expected:
+            log.info(f"Index format changed ({actual or 'unknown'} -> {expected}); rebuilding index")
+            for entry in os.listdir(PERSIST_DIRECTORY):
+                entry_path = os.path.join(PERSIST_DIRECTORY, entry)
+                if os.path.isdir(entry_path):
+                    shutil.rmtree(entry_path)
+                else:
+                    os.remove(entry_path)
+
+
+def mark_embedding_index_matches():
+    os.makedirs(PERSIST_DIRECTORY, exist_ok=True)
+    with open(os.path.join(PERSIST_DIRECTORY, "embedding_model.txt"), "w") as f:
+        f.write(f"{EMBEDDING_MODEL_FILENAME}|{INDEX_VERSION}")
+
+
+def load_documents_from_data_dir() -> list:
+    """Load all supported documents (.pdf + .txt) from the data dir."""
+    raw_documents = []
+    if not os.path.isdir(DATA_PATH):
+        return raw_documents
+    for f in sorted(os.listdir(DATA_PATH)):
+        fpath = os.path.join(DATA_PATH, f)
+        if not os.path.isfile(fpath):
+            continue
+        try:
+            if f.lower().endswith(".pdf"):
+                raw_documents.extend(PyPDFLoader(fpath).load())
+            elif f.lower().endswith(".txt"):
+                raw_documents.extend(TextLoader(fpath, encoding="utf-8").load())
+        except Exception as e:
+            log.warning(f"Skipping {f}: {e}")
+    return raw_documents
+
+
+def indexed_source_files(vector_store) -> set:
+    """Return the set of source filenames already present in the index."""
+    try:
+        data = vector_store.get(include=["metadatas"])
+        metadatas = data.get("metadatas") or []
+        return {os.path.basename(m.get("source", "")) for m in metadatas if m and m.get("source")}
+    except Exception as e:
+        log.warning(f"Could not read indexed sources: {e}")
+        return set()
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1e-9
+    nb = math.sqrt(sum(x * x for x in b)) or 1e-9
+    return dot / (na * nb)
+
+
 def build_resources():
     global llm_instance, retriever, vector_store, embeddings_instance
 
@@ -332,6 +415,8 @@ def build_resources():
             shutil.rmtree(PERSIST_DIRECTORY)
         except Exception:
             pass
+
+    ensure_embedding_index_matches()
 
     if not ensure_embedding_model():
         log.error("Embedding model unavailable. RAG features disabled.")
@@ -372,32 +457,41 @@ def build_resources():
                 doc.metadata["domain"] = domain
                 raw_documents.append(doc)
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     docs = text_splitter.split_documents(raw_documents)
-    log.info(f"Loaded {len(docs)} document chunks across {len(domains)} domain(s): {domains}")
+    log.info(f"Loaded {len(raw_documents)} source pages -> {len(docs)} chunks across {len(domains)} domain(s): {domains}")
 
     if docs:
-        log.info("Creating Vector Store")
-        vector_store = Chroma.from_documents(
-            documents=docs,
-            embedding=embeddings_instance,
-            persist_directory=PERSIST_DIRECTORY
+        log.info("Opening Vector Store")
+        vector_store = Chroma(
+            persist_directory=PERSIST_DIRECTORY,
+            embedding_function=embeddings_instance,
+            collection_metadata={"hnsw:space": "cosine"},
         )
-        retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+        existing = indexed_source_files(vector_store)
+        new_docs = [d for d in docs if os.path.basename(d.metadata.get("source", "")) not in existing]
+        if new_docs:
+            log.info(f"Adding {len(new_docs)} new chunks (skipping {len(docs) - len(new_docs)} already indexed)")
+            vector_store.add_documents(new_docs)
+        else:
+            log.info("All documents already indexed")
+        retriever = vector_store.as_retriever(search_kwargs={"k": RETRIEVAL_K})
     else:
         log.info("No documents found — vector store will be created on first ingestion")
+    mark_embedding_index_matches()
 
 
 def run_ingestion(file_paths: list[str], domain: str = "General"):
     global ingestion_progress, retriever, vector_store, embeddings_instance
 
+    ensure_embedding_index_matches()
     embeddings = embeddings_instance or LlamaCppEmbeddings(model_path=EMBEDDING_MODEL_PATH)
 
-    if vector_store is None:
-        vector_store = Chroma(
-            persist_directory=PERSIST_DIRECTORY,
-            embedding_function=embeddings
-        )
+    vector_store = Chroma(
+        persist_directory=PERSIST_DIRECTORY,
+        embedding_function=embeddings,
+        collection_metadata={"hnsw:space": "cosine"},
+    )
 
     domain_dir = get_domain_path(domain)
     os.makedirs(domain_dir, exist_ok=True)
@@ -406,6 +500,8 @@ def run_ingestion(file_paths: list[str], domain: str = "General"):
     ingestion_progress["status"] = "running"
     ingestion_progress["total"] = total
     ingestion_progress["domain"] = domain
+
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
 
     for i, file_path in enumerate(file_paths):
         filename = os.path.basename(file_path)
@@ -420,11 +516,15 @@ def run_ingestion(file_paths: list[str], domain: str = "General"):
                 loader = TextLoader(file_path, encoding="utf-8")
             raw_docs = loader.load()
 
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             docs = text_splitter.split_documents(raw_docs)
 
             for doc in docs:
                 doc.metadata["domain"] = domain
+
+            try:
+                vector_store._collection.delete(where={"source": file_path})
+            except Exception:
+                pass
 
             ingestion_progress["message"] = f"Indexing {filename} ({len(docs)} chunks)..."
             vector_store.add_documents(docs)
@@ -437,7 +537,8 @@ def run_ingestion(file_paths: list[str], domain: str = "General"):
             log.warning(f"Error processing {filename}: {e}")
             ingestion_progress["message"] = f"Error: {filename} - {e}"
 
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+    retriever = vector_store.as_retriever(search_kwargs={"k": RETRIEVAL_K})
+    mark_embedding_index_matches()
     ingestion_progress["status"] = "completed"
     ingestion_progress["message"] = f"Ingested {total} file(s) into '{domain}'"
     
@@ -502,27 +603,18 @@ def download_model_background(model_key: str):
 
 
 SEARCH_INTENT_PATTERNS = [
-    # Time-sensitive queries
+    # Time-sensitive queries (only these should pull the model away from local docs)
     r"\b(latest|current|recent|up[- ]to[- ]date|breaking|newest)\b",
     r"\b(as of|as at)\b",
     r"\b(today|yesterday|tonight|this (year|month|week|quarter))\b",
     r"\b(20\d{2})\b",
-    r"\b(news|update|announce|release|launch)\b",
+    r"\b(news)\b",
     r"\b(weather|forecast|temperature|rain|storm)\b",
-    r"\b(stock|price|share|market|index|nasdaq|dow|s&p)\b",
+    r"\b(stock|share price|market|index|nasdaq|dow|s&p)\b",
     r"\b(score|result|winner|standing|fixture|match)\b",
     r"\b(population|GDP|inflation|unemployment|election)\b",
     r"\b(CEO|president|prime minister|chancellor|secretary)\b",
-    r"\b(schedule|deadline|upcoming)\b",
     r"\b(who (is|are|was|were)|what (is|are|was|were) the (latest|current|newest))\b",
-    r"\b(how many|how much)\b.*\b(202[4-9]|20[3-9]\d)\b",
-    # Practical / real-world information queries
-    r"\b(registration|register|sign[- ]?up|enroll|enrollment)\b",
-    r"\b(website|site|url|homepage|portal)\b",
-    r"\b(address|phone|email|contact|hours|location|directions|office)\b",
-    r"\b(price|cost|fee|pricing|subscription|plan|tier|billing)\b",
-    r"\b(how (to|do|can|would|is)|where (to|can|do|is|are))\b",
-    r"\b(exam|test|certification|certificate|diploma)\b.*\b(registration|register|signup|website|fee|cost|price|schedule|date|deadline)\b",
 ]
 
 
@@ -630,50 +722,128 @@ async def health():
     }
 
 
+def retrieve_docs(query: str) -> list:
+    """Vector retrieval plus cosine-similarity filtering so irrelevant chunks never reach the LLM."""
+    if retriever is None:
+        return []
+    doc_chunks = retriever.invoke(query)
+    if not doc_chunks or embeddings_instance is None:
+        return doc_chunks
+    try:
+        q_emb = embeddings_instance.embed_query(query)
+        kept = []
+        for d in doc_chunks:
+            sim = _cosine_similarity(q_emb, embeddings_instance.embed_query(d.page_content))
+            log.info(f"[retrieve] sim={sim:.3f} source={os.path.basename(d.metadata.get('source',''))} | {d.page_content[:60]!r}")
+            if sim >= RELEVANCE_THRESHOLD:
+                kept.append(d)
+        if kept:
+            log.info(f"[retrieve] kept {len(kept)}/{len(doc_chunks)} chunks (threshold={RELEVANCE_THRESHOLD})")
+        else:
+            log.info("[retrieve] no chunks above threshold — answering without context")
+        return kept
+    except Exception as e:
+        log.warning(f"Relevance filtering failed: {e}")
+        return doc_chunks
+
+
+_STOPWORDS = set((
+    "a an and or but if of to in on for with as at by from up down is are was were "
+    "be been being this that these those it its not no so than then them they their "
+    "he she we you i do does did have has had will would can could should may might "
+    "about into over under the your my our what when where which who whom how why "
+    "between among during before after because while each some any all both few more "
+    "most other such only own same too very just also".split()
+))
+
+
+def _significant_tokens(text: str) -> set:
+    import re
+    tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {t for t in tokens if (len(t) >= 3 or t.isdigit()) and t not in _STOPWORDS}
+
+
+def _grounded_citations(candidates: list[dict], answer: str) -> list[Citation]:
+    """Keep only citations whose source content actually overlaps the generated answer."""
+    if not candidates or not answer:
+        return []
+    ans_tokens = _significant_tokens(answer)
+    if not ans_tokens:
+        return []
+    seen = set()
+    grounded = []
+    for c in candidates:
+        chunk_tokens = _significant_tokens(c["content"])
+        if not chunk_tokens:
+            continue
+        matched = sum(1 for t in chunk_tokens if t in ans_tokens)
+        ratio = matched / len(chunk_tokens)
+        key = f"{c['source']}:{c['page']}"
+        log.info(f"[citations] source={c['source']} page={c['page']} matched={matched} ratio={ratio:.2f}")
+        if (matched >= 3 and ratio >= 0.08) or ratio >= 0.3:
+            if key not in seen:
+                seen.add(key)
+                grounded.append(Citation(
+                    source=c["source"],
+                    page=c["page"],
+                    content=c["content"][:300]
+                ))
+    return grounded
+
+
 def build_messages_and_context(req: ChatRequest):
     query = ""
     for m in reversed(req.messages):
-        if m.content:
+        if m.content and m.role == "user":
             query = m.content
             break
 
     doc_chunks = []
-    citations = []
-    rag_context = ""
     if not req.disable_rag:
-        if vector_store is not None:
-            search_kwargs = {"k": 4}
-            if req.domains:
-                search_kwargs["filter"] = {"domain": {"$in": req.domains}}
+        if vector_store is not None and req.domains:
+            search_kwargs = {"k": RETRIEVAL_K}
+            search_kwargs["filter"] = {"domain": {"$in": req.domains}}
             local_retriever = vector_store.as_retriever(search_kwargs=search_kwargs)
-            doc_chunks = local_retriever.invoke(query)
+            doc_chunks = retrieve_docs(query) if retriever else local_retriever.invoke(query)
         elif retriever is not None:
-            doc_chunks = retriever.invoke(query)
-        rag_context = "\n\n".join(d.page_content for d in doc_chunks)
-        seen = set()
-        for d in doc_chunks:
-            src = d.metadata.get("source", "Unknown")
-            page = d.metadata.get("page")
-            key = f"{src}:{page}"
-            if key not in seen:
-                seen.add(key)
-                citations.append(Citation(
-                    source=os.path.basename(src),
-                    page=page,
-                    content=d.page_content[:300]
-                ))
+            doc_chunks = retrieve_docs(query)
+    
+    rag_context = "\n\n".join(d.page_content for d in doc_chunks)
 
-    do_web_search = req.web_search or requires_web_search(query)
+    candidate_citations = []
+    seen = set()
+    for d in doc_chunks:
+        src = d.metadata.get("source", "Unknown")
+        page = d.metadata.get("page")
+        key = f"{src}:{page}"
+        if key not in seen:
+            seen.add(key)
+            candidate_citations.append({
+                "source": os.path.basename(src),
+                "page": page,
+                "content": d.page_content,
+            })
+
     use_fc = supports_function_calling()
+    # Auto-trigger web search by intent only for models that cannot call tools
+    # themselves (allow_search=false). Models with allow_search=true decide via
+    # tool calling, so the intent classifier stays out of the way.
+    do_web_search = req.web_search or (requires_web_search(query) if not use_fc else False)
     log.info(f"[build] query={query[:80]} do_web_search={do_web_search} use_fc={use_fc} model_size={get_current_model_param_size()}B rag_chunks={len(doc_chunks)}")
 
     # Small models (<4B): prompt injection. Large models (>=4B): tool calling.
+    web_citations = []
     if do_web_search:
         if not use_fc:
             log.info(f"Web search triggered (flag={req.web_search}, intent={do_web_search}) — prompt injection (<{FC_THRESHOLD_B}B)")
-            web_results, web_citations = web_search(query)
+            web_results, web_citations_tmp = web_search(query)
+            web_citations = web_citations_tmp
             for wc in web_citations:
-                citations.append(Citation(source=wc["source"], content=wc["content"], url=wc["source"]))
+                candidate_citations.append({
+                    "source": wc["source"],
+                    "page": None,
+                    "content": wc["content"],
+                })
             rag_context = rag_context + "\n\n---\nWeb search results:\n" + web_results if rag_context else f"Web search results:\n{web_results}"
         else:
             log.info(f"Web search triggered (flag={req.web_search}, intent={do_web_search}) — tool calling")
@@ -681,19 +851,20 @@ def build_messages_and_context(req: ChatRequest):
     if rag_context:
         extra_inst = ""
         if use_fc and do_web_search:
-            extra_inst = "\n- The user needs current information. You MUST use the web_search tool to find the answer before responding."
+            extra_inst = "\n- Use the web_search tool ONLY if the information above is insufficient or the user needs current/real-time information."
         elif use_fc:
-            extra_inst = "\n- You have access to the web_search tool. Use it to supplement the information below if needed."
+            extra_inst = "\n- You have access to the web_search tool. Use it only if the information above is insufficient."
         system_content = (
-            "You are a helpful assistant. Answer the user's question using ONLY the information provided below.\n"
+            "You are a helpful assistant. Answer the user's question using the information provided below.\n"
             "\n"
             "Information:\n"
             f"{rag_context}\n"
             "\n"
             "Instructions:\n"
-            "- Your answer must be based exclusively on the information above. Do not use your own knowledge or training data.\n"
-            "- If the information does not contain the answer, say \"The provided documents do not contain this information.\"\n"
-            "- Keep answers concise and direct.\n"
+            "- Answer based on the information above.\n"
+            "- If the information does not contain the answer, say so.\n"
+            "- If both local information and web search results are present, prefer the local information unless it is outdated or incomplete.\n"
+            "- Keep answers concise.\n"
             "- Use bullet points or numbered lists when appropriate.\n"
             f"{extra_inst}\n"
             "- Do NOT mention or discuss the format, source, or limitations of the information provided. Just answer the question.\n"
@@ -710,8 +881,7 @@ def build_messages_and_context(req: ChatRequest):
             "Do NOT include any thinking, reasoning, or analysis. Only propyvide the final answer."
         )
 
-    if not req.enable_thinking:
-        system_content += "- Do NOT include any thinking, reasoning, or analysis. Only provide the final answer."
+
 
     messages = [{"role": "system", "content": system_content}]
     for m in req.messages:
@@ -733,7 +903,7 @@ def build_messages_and_context(req: ChatRequest):
             msg["tool_call_id"] = m.tool_call_id
         messages.append(msg)
 
-    return query, citations, do_web_search, use_fc, messages
+    return query, candidate_citations, do_web_search, use_fc, messages, citations
 
 
 def _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse):
@@ -756,7 +926,7 @@ def _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse):
     })
 
 
-def _execute_and_feed(kwargs, content_acc, tcd, query, citations):
+def _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations):
     """Execute a tool call, feed the result into kwargs messages, and append citations."""
     name = tcd["name"]
     args = tcd.get("arguments", {})
@@ -766,7 +936,11 @@ def _execute_and_feed(kwargs, content_acc, tcd, query, citations):
     log.info(f"[exec_tool] web_search returned {len(result)} chars, {len(web_citations)} citations")
 
     for wc in web_citations:
-        citations.append(Citation(source=wc["source"], content=wc["content"], url=wc["source"]))
+        candidate_citations.append({
+            "source": wc["source"],
+            "page": None,
+            "content": wc["content"],
+        })
 
     assistant_msg = {"role": "assistant", "content": content_acc or None, "tool_calls": [
         {"id": f"call_{int(time.time())}_{name}", "type": "function",
@@ -777,12 +951,12 @@ def _execute_and_feed(kwargs, content_acc, tcd, query, citations):
 
 
 def stream_chat(req: ChatRequest):
-    query, citations, do_web_search, use_fc, messages = build_messages_and_context(req)
+    query, candidate_citations, do_web_search, use_fc, messages, citations = build_messages_and_context(req)
 
     kwargs = {
         "messages": messages,
-        "temperature": req.temperature if req.temperature is not None else 0.7,
-        "max_tokens": req.max_tokens or 8192,
+        "temperature": req.temperature if req.temperature is not None else 0.3,
+        "max_tokens": min(req.max_tokens or 1024, 2048),
     }
     if use_fc:
         kwargs["tools"] = [WEB_SEARCH_TOOL]
@@ -790,19 +964,18 @@ def stream_chat(req: ChatRequest):
     now = int(time.time())
     model_name = req.model
     chat_id = f"chatcmpl-{now}"
+    resp_parts = []
 
     def sse(event: dict):
         return f"data: {json.dumps(event, default=str)}\n\n"
 
     def content_chunk(text: str, finish: str | None = None):
+        if text:
+            resp_parts.append(text)
         return sse({
             "id": chat_id, "object": "chat.completion.chunk", "created": now, "model": model_name,
             "choices": [{"index": 0, "delta": {"content": text} if text else {}, "finish_reason": finish}]
         })
-
-    yield sse({"type": "citations", "citations": [
-        {"source": c.source, "page": c.page, "content": c.content, "url": c.url} for c in citations
-    ]})
 
     for iteration in range(4 if use_fc else 1):
         log.info(f"[stream] iteration={iteration} use_fc={use_fc} do_web_search={do_web_search} messages={len(kwargs['messages'])} tools={'tools' in kwargs}")
@@ -856,7 +1029,7 @@ def stream_chat(req: ChatRequest):
                     log.info(f"[stream] tool_call closed, parsed={tcd is not None}")
                     if tcd:
                         yield from _yield_tool_call_chunks(chat_id, model_name, now, tcd, sse)
-                        _execute_and_feed(kwargs, content_acc, tcd, query, citations)
+                        _execute_and_feed(kwargs, content_acc, tcd, query, candidate_citations)
                         kwargs.pop("tools", None)
                         iter_called_tool = True
                         content_acc = ""
@@ -949,14 +1122,19 @@ def stream_chat(req: ChatRequest):
         ]})
         yield content_chunk("", "stop")
 
+    grounded = _grounded_citations(candidate_citations, "".join(resp_parts))
+    yield sse({"type": "citations", "citations": [
+        {"source": c.source, "page": c.page, "content": c.content} for c in grounded
+    ]})
+
 
 def non_stream_chat(req: ChatRequest):
-    query, citations, do_web_search, use_fc, messages = build_messages_and_context(req)
+    query, candidate_citations, do_web_search, use_fc, messages, citations = build_messages_and_context(req)
 
     kwargs = {
         "messages": messages,
         "temperature": req.temperature if req.temperature is not None else 0.7,
-        "max_tokens": req.max_tokens or 8192,
+        "max_tokens": min(req.max_tokens or 1024, 2048),
     }
     if use_fc:
         kwargs["tools"] = [WEB_SEARCH_TOOL]
@@ -968,7 +1146,7 @@ def non_stream_chat(req: ChatRequest):
         if use_fc and "<tool_call>" in answer:
             tcd = _parse_qwen_tool_call(answer)
             if tcd:
-                _execute_and_feed(kwargs, "", tcd, query, citations)
+                _execute_and_feed(kwargs, "", tcd, query, candidate_citations)
                 kwargs.pop("tools", None)
                 continue
 
@@ -980,7 +1158,7 @@ def non_stream_chat(req: ChatRequest):
             id=f"chatcmpl-{now}", created=now, model=req.model,
             choices=[{"index": 0, "message": {"role": "assistant", "content": answer}, "finish_reason": "stop"}],
             usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-            citations=citations,
+            citations=_grounded_citations(candidate_citations, answer),
         )
 
     now = int(time.time())
@@ -988,7 +1166,7 @@ def non_stream_chat(req: ChatRequest):
         id=f"chatcmpl-{now}", created=now, model=req.model,
         choices=[{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
         usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        citations=citations,
+        citations=[],
     )
 
 

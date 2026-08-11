@@ -502,7 +502,7 @@ ragToggle.addEventListener('click', () => {
 
 thinkingToggle.addEventListener('click', () => {
   thinkingEnabled = !thinkingEnabled;
-  thinkingToggle.classList.toggle('active', thinkingEnabled);
+  thinkingToggle.classList.toggle('active', !thinkingEnabled);
 });
 
 webSearchToggle.addEventListener('click', () => {
@@ -532,7 +532,7 @@ chatForm.addEventListener('submit', async (e) => {
       messages: [...chatHistory, { role: 'user', content: text }],
       temperature: 0.7,
       max_tokens: 8192,
-      stream: true,
+      stream: thinkingEnabled,
       enable_thinking: thinkingEnabled,
     };
     if (webSearchEnabled) body.web_search = true;
@@ -561,60 +561,50 @@ chatForm.addEventListener('submit', async (e) => {
     // Build content progressively
     let rawContent = '';
     let citationsData = null;
-    let buffer = '';
-    let searchIndicator = null;
 
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
+    if (body.stream) {
+      let buffer = '';
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
 
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const payload = line.slice(6).trim();
-        if (payload === '[DONE]') continue;
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') continue;
 
-        try {
-          const evt = JSON.parse(payload);
+          try {
+            const evt = JSON.parse(payload);
 
-          if (evt.type === 'citations') {
-            citationsData = evt.citations;
-            continue;
-          }
-          if (evt.type === 'usage') continue;
+            if (evt.type === 'citations') {
+              citationsData = evt.citations;
+              continue;
+            }
+            if (evt.type === 'usage') continue;
 
-          const choice = evt.choices?.[0];
-          if (!choice) continue;
+            const choice = evt.choices?.[0];
+            if (!choice) continue;
 
-          const delta = choice.delta || {};
-          if (delta.tool_calls) {
-            // Tool call started — show web search indicator
-            if (!searchIndicator) {
-              searchIndicator = document.createElement('div');
-              searchIndicator.className = 'search-indicator';
-              searchIndicator.innerHTML = 'Searching the web <span></span><span></span><span></span>';
-              assistantInner.appendChild(searchIndicator);
+            const delta = choice.delta || {};
+            if (delta.content) {
+              rawContent += delta.content;
+              const rendered = renderContent(rawContent);
+              assistantInner.innerHTML = rendered;
               messagesEl.scrollTop = messagesEl.scrollHeight;
             }
-          }
-          if (delta.content) {
-            if (searchIndicator) {
-              searchIndicator.remove();
-              searchIndicator = null;
-            }
-            rawContent += delta.content;
-            const rendered = renderContent(rawContent);
-            assistantInner.innerHTML = rendered;
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-          }
-        } catch {}
+          } catch {}
       }
+    } else {
+      const data = await resp.json();
+      rawContent = data.choices?.[0]?.message?.content || '';
+      citationsData = data.citations || null;
     }
 
     // Final render with citations

@@ -36,7 +36,7 @@ No tests, no lint/typecheck/CI config exists.
 - Toggle persisted to `localStorage` (`'theme': 'light'|'dark'`), falls back to `prefers-color-scheme`
 
 ### Model management
-- Embedding model (`all-MiniLM-L6-v2-ggml-model-f16.gguf`) is **bundled** in PyInstaller build (present in repo)
+- Embedding model (`granite-embedding-english-r2.Q8_0.gguf`, IBM Granite, ModernBERT, 768-dim) is auto-downloaded at startup if missing (bundled in PyInstaller build)
 - LLMs downloaded at runtime by user via Settings panel — uses `requests` streaming from Hugging Face (NOT `huggingface_hub`)
 - Active model stored in `models/current_model.txt`
 - `/v1/models/download/{id}` + `/v1/models/download/progress` for download tracking
